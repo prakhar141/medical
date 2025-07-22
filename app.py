@@ -3,37 +3,40 @@ import streamlit as st
 import requests
 from huggingface_hub import list_repo_files, hf_hub_download
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import Pinecone
+from langchain.vectorstores import Pinecone as LangchainPinecone
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from transformers import pipeline
-import pinecone
+from pinecone import Pinecone, ServerlessSpec
 
 # ========== CONFIG ==========
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_OPENROUTER_API_KEY"
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_PINECONE_API_KEY"
-PINECONE_ENV = "gcp-starter"  # or your specific Pinecone environment
 INDEX_NAME = "quiliffy-medical"
-
 MODEL_NAME = "deepseek/deepseek-chat:free"
 HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
 
 # ========== PAGE CONFIG ==========
-st.set_page_config(page_title="🩺 Quiliffy Medical Bot", layout="wide")
+st.set_page_config(page_title="🍺 Quiliffy Medical Bot", layout="wide")
 st.title("🧠 Quiliffy Medical Assistant")
 
 # ========== SIDEBAR ==========
-st.sidebar.title("🧭 Select Mode")
+st.sidebar.title("🗭 Select Mode")
 mode = st.sidebar.radio("Choose what you want to do:", ["💬 Ask Questions", "📄 File Summary", "🧬 Extract Keywords"])
 
 # ========== PINECONE INIT ==========
 @st.cache_resource
 def init_pinecone():
-    pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-    if INDEX_NAME not in pinecone.list_indexes():
-        pinecone.create_index(INDEX_NAME, dimension=768)
-    return pinecone.Index(INDEX_NAME)
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+    if INDEX_NAME not in pc.list_indexes().names():
+        pc.create_index(
+            name=INDEX_NAME,
+            dimension=768,  # for BAAI/bge-base-en
+            metric="cosine",
+            spec=ServerlessSpec(cloud="aws", region="us-west-2")
+        )
+    return pc.Index(INDEX_NAME)
 
 # ========== HELPERS ==========
 @st.cache_data(show_spinner="📂 Loading repo files...")
@@ -48,7 +51,7 @@ def get_text_files():
 def build_vector_db():
     index = init_pinecone()
     embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
-    vectorstore = Pinecone(index, embedder.embed_query, "text")
+    vectorstore = LangchainPinecone(index, embedder, text_key="text")
 
     text_files = get_text_files()
     docs = []

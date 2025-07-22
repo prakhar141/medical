@@ -9,66 +9,33 @@ from langchain.docstore.document import Document
 from transformers import pipeline
 from pinecone import Pinecone, ServerlessSpec
 
-# ========== CONFIG ==========
+# ========== CONFIG ========== #
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_OPENROUTER_API_KEY"
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_PINECONE_API_KEY"
-index_name = "bot-medical"
-MODEL_NAME = "deepseek/deepseek-chat:free"
+INDEX_NAME = "medical-bot"
+EMBEDDING_MODEL_NAME = "BAAI/bge-base-en"
+EMBEDDING_DIM = 768
 HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
-embedding_dim = 768  # ⚠️ Use 768 if you use BAAI/bge-base-en
-embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
-# ========== PAGE CONFIG ==========
+MODEL_NAME = "deepseek/deepseek-chat:free"
+
+# ========== PAGE CONFIG ========== #
 st.set_page_config(page_title="🧠 Quiliffy Medical Bot", layout="wide")
 st.title("🧠 Quiliffy Medical Assistant")
 
-# ========== PINECONE INIT ==========
-import os
-from pinecone import Pinecone, ServerlessSpec
+# ========== PINECONE INIT FUNCTION ========== #
+def init_pinecone_and_index():
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+    if INDEX_NAME not in pc.list_indexes().names():
+        pc.create_index(
+            name=INDEX_NAME,
+            dimension=EMBEDDING_DIM,
+            metric="cosine",
+            spec=ServerlessSpec(cloud="aws", region="us-east-1")
+        )
+    return pc.Index(INDEX_NAME)
 
-# ✅ Load API key from env variable or directly use the key
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_API_KEY"
-index_name = "medical-bot"
-embedding_dim = 768  # Use 1536 if you're using models like `text-embedding-ada-002`
-
-# ✅ Initialize Pinecone client
-pc = Pinecone(api_key=PINECONE_API_KEY)
-
-# ✅ Create index if not exists
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=embedding_dim,
-        metric="cosine",
-        spec=ServerlessSpec(cloud="aws", region="us-east-1")  # Only allowed region for free tier
-    )
-
-# ✅ Connect to the index
-index = pc.Index(index_name)
-import os
-from pinecone import Pinecone, ServerlessSpec
-
-# ✅ Load API key from env variable or directly use the key
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_API_KEY"
-index_name = "medical-bot"
-embedding_dim = 768  # Use 1536 if you're using models like `text-embedding-ada-002`
-
-# ✅ Initialize Pinecone client
-pc = Pinecone(api_key=PINECONE_API_KEY)
-
-# ✅ Create index if not exists
-if index_name not in pc.list_indexes().names():
-    pc.create_index(
-        name=index_name,
-        dimension=embedding_dim,
-        metric="cosine",
-        spec=ServerlessSpec(cloud="aws", region="us-east-1")  # Only allowed region for free tier
-    )
-
-# ✅ Connect to the index
-index = pc.Index(index_name)
-
-# ========== HELPERS ==========
+# ========== HELPER FUNCTIONS ========== #
 @st.cache_data(show_spinner="📂 Loading repo files...")
 def get_text_files():
     try:
@@ -76,32 +43,11 @@ def get_text_files():
     except Exception as e:
         st.error(f"❌ Could not fetch files: {e}")
         return []
-from pinecone import Pinecone, ServerlessSpec
-
-def init_pinecone_and_index():
-    PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_API_KEY"
-    index_name = "medical-bot"
-    embedding_dim = 768  # Adjust as per your embedding model
-
-    # ✅ Initialize Pinecone
-    pc = Pinecone(api_key=PINECONE_API_KEY)
-
-    # ✅ Create the index if not exists
-    if index_name not in pc.list_indexes().names():
-        pc.create_index(
-            name=index_name,
-            dimension=embedding_dim,
-            metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1")  # Free-tier region
-        )
-
-    # ✅ Return the index object
-    return pc.Index(index_name)
 
 @st.cache_resource(show_spinner="🔧 Building Pinecone Vector DB...")
 def build_vector_db():
     pinecone_index = init_pinecone_and_index()
-    embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
+    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
     vectorstore = LangchainPinecone(index=pinecone_index, embedding=embedder, text_key="text")
 
     text_files = get_text_files()
@@ -143,7 +89,7 @@ def ask_llm(context, query):
     except Exception as e:
         return f"❌ API Error: {e}"
 
-# ========== MAIN CHATBOT EXECUTION ==========
+# ========== MAIN CHATBOT EXECUTION ========== #
 retriever = build_vector_db()
 if not retriever:
     st.stop()
@@ -172,7 +118,7 @@ for chat in reversed(st.session_state.chat):
         for src in chat["sources"]:
             st.caption(f"📄 Source: `{src}`")
 
-# ========== FOOTER ==========
+# ========== FOOTER ========== #
 st.markdown("""
 <hr style="margin-top: 40px;">
 <div style='text-align: center; color: #888; font-size: 14px;'>

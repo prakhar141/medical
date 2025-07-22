@@ -76,6 +76,27 @@ def get_text_files():
     except Exception as e:
         st.error(f"❌ Could not fetch files: {e}")
         return []
+from pinecone import Pinecone, ServerlessSpec
+
+def init_pinecone_and_index():
+    PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_API_KEY"
+    index_name = "medical-bot"
+    embedding_dim = 768  # Adjust as per your embedding model
+
+    # ✅ Initialize Pinecone
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+
+    # ✅ Create the index if not exists
+    if index_name not in pc.list_indexes().names():
+        pc.create_index(
+            name=index_name,
+            dimension=embedding_dim,
+            metric="cosine",
+            spec=ServerlessSpec(cloud="aws", region="us-east-1")  # Free-tier region
+        )
+
+    # ✅ Return the index object
+    return pc.Index(index_name)
 
 @st.cache_resource(show_spinner="🔧 Building Pinecone Vector DB...")
 def build_vector_db():

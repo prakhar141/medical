@@ -69,6 +69,6 @@ st.markdown(f"<div style='font-size: 17px; line-height: 1.8;'>{story}</div>", un
 # Footer
 st.markdown("---")
 st.markdown(
-    "<p style='text-align: center; font-size: 15px; color: #888;'>Written with love during lockdown ✍️</p>",
+    "<p style='text-align: center; font-size: 15px; color: #888;'>Written with love❤️by Archana Mathur during lockdown ✍️</p>",
     unsafe_allow_html=True
 )

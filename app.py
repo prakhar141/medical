@@ -23,16 +23,18 @@ st.title("🧠 Quiliffy Medical Assistant")
 
 # ========== PINECONE INIT ==========
 @st.cache_resource
-def init_pinecone():
+def init_pinecone_and_index():
     pc = Pinecone(api_key=PINECONE_API_KEY)
+
     if INDEX_NAME not in pc.list_indexes().names():
         pc.create_index(
             name=INDEX_NAME,
             dimension=768,
             metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1")  # ✅ Supported free-tier region
+            spec=ServerlessSpec(cloud="aws", region="us-east-1")
         )
-    return pc.Index(INDEX_NAME)
+    index = pc.Index(INDEX_NAME)
+    return index
 
 # ========== HELPERS ==========
 @st.cache_data(show_spinner="📂 Loading repo files...")
@@ -45,9 +47,9 @@ def get_text_files():
 
 @st.cache_resource(show_spinner="🔧 Building Pinecone Vector DB...")
 def build_vector_db():
-    index = init_pinecone()
+    pinecone_index = init_pinecone_and_index()
     embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
-    vectorstore = LangchainPinecone(index, embedder, text_key="text")
+    vectorstore = LangchainPinecone(index=pinecone_index, embedding=embedder, text_key="text")
 
     text_files = get_text_files()
     docs = []

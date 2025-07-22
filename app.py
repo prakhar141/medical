@@ -6,7 +6,6 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import Pinecone as LangchainPinecone
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-from transformers import pipeline
 from pinecone import Pinecone, ServerlessSpec
 
 # ========== CONFIG ========== #
@@ -26,13 +25,21 @@ st.title("🧠 Quiliffy Medical Assistant")
 # ========== PINECONE INIT FUNCTION ========== #
 def init_pinecone_and_index():
     pc = Pinecone(api_key=PINECONE_API_KEY)
-    if INDEX_NAME not in pc.list_indexes().names():
+    
+    # List existing indexes
+    existing_indexes = [index.name for index in pc.list_indexes()]  # Fixed index listing
+    
+    if INDEX_NAME not in existing_indexes:
         pc.create_index(
             name=INDEX_NAME,
             dimension=EMBEDDING_DIM,
             metric="cosine",
             spec=ServerlessSpec(cloud="aws", region="us-east-1")
         )
+        st.success(f"Created new index: {INDEX_NAME}")
+    else:
+        st.info(f"Using existing index: {INDEX_NAME}")
+    
     return pc.Index(INDEX_NAME)
 
 # ========== HELPER FUNCTIONS ========== #
@@ -48,7 +55,7 @@ def get_text_files():
 def build_vector_db():
     pinecone_index = init_pinecone_and_index()
     embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
-    vectorstore = LangchainPinecone(index=pinecone_index, embedding=embedder, text_key="text")
+    vectorstore = LangchainPinecone(pinecone_index, embedder, "text")  # Fixed parameter order
 
     text_files = get_text_files()
     docs = []
@@ -67,7 +74,7 @@ def build_vector_db():
 
     if docs:
         vectorstore.add_documents(docs)
-        return vectorstore.as_retriever(search_type="similarity", k=4)
+        return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
     else:
         st.error("❌ No documents found.")
         return None
@@ -83,7 +90,11 @@ def ask_llm(context, query):
         {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
     ]
     try:
-        res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": MODEL_NAME, "messages": messages})
+        res = requests.post(
+            "https://openrouter.ai/api/v1/chat/completions",
+            headers=headers,
+            json={"model": MODEL_NAME, "messages": messages}
+        )
         res.raise_for_status()
         return res.json()["choices"][0]["message"]["content"]
     except Exception as e:

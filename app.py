@@ -1,5 +1,4 @@
 import os
-import fitz  # PyMuPDF
 import streamlit as st
 import requests
 from huggingface_hub import list_repo_files, hf_hub_download
@@ -11,7 +10,7 @@ from langchain.docstore.document import Document
 # ========== CONFIG ==========
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
 MODEL_NAME = "deepseek/deepseek-chat:free"
-HF_REPO_ID = "prakhar146/medical"
+HF_REPO_ID = "prakhar146/medical-text"
 HF_REPO_TYPE = "dataset"
 
 # ========== UI ==========
@@ -26,10 +25,10 @@ if st.button("🔁 Reset Chat"):
 
 # ========== LIST FILES ==========
 @st.cache_data(show_spinner="📂 Scanning Hugging Face repo...")
-def get_pdf_files():
+def get_text_files():
     try:
         all_files = list_repo_files(repo_id=HF_REPO_ID, repo_type=HF_REPO_TYPE)
-        return [f for f in all_files if f.endswith(".pdf")]
+        return [f for f in all_files if f.endswith(".txt")]
     except Exception as e:
         st.error(f"❌ Could not list files: {e}")
         return []
@@ -38,22 +37,22 @@ def get_pdf_files():
 @st.cache_resource(show_spinner="📚 Building vector database...")
 def build_vector_db():
     docs = []
-    pdf_files = get_pdf_files()
-    if not pdf_files:
-        st.warning("⚠️ No PDF files found in repo.")
+    text_files = get_text_files()
+    if not text_files:
+        st.warning("⚠️ No TXT files found in repo.")
         return None
 
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
-    for pdf_name in pdf_files:
+    for text_name in text_files:
         try:
-            file_path = hf_hub_download(repo_id=HF_REPO_ID, filename=pdf_name, repo_type=HF_REPO_TYPE)
-            with fitz.open(file_path) as doc:
-                text = "\n".join([page.get_text() for page in doc])
+            file_path = hf_hub_download(repo_id=HF_REPO_ID, filename=text_name, repo_type=HF_REPO_TYPE)
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
                 chunks = splitter.split_text(text)
-                docs.extend([Document(page_content=chunk, metadata={"source": pdf_name}) for chunk in chunks])
-            st.markdown(f"✅ Loaded `{pdf_name}` ({len(chunks)} chunks)")
+                docs.extend([Document(page_content=chunk, metadata={"source": text_name}) for chunk in chunks])
+            st.markdown(f"✅ Loaded `{text_name}` ({len(chunks)} chunks)")
         except Exception as e:
-            st.warning(f"⚠️ Error loading `{pdf_name}`: {e}")
+            st.warning(f"⚠️ Error loading `{text_name}`: {e}")
 
     if not docs:
         st.error("❌ No documents extracted.")
@@ -68,7 +67,7 @@ def ask_deepseek(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "HTTP-Referer": "https://chat.openai.com",
-        "X-Title": "PDF Chatbot"
+        "X-Title": "Text Chatbot"
     }
     messages = [
         {"role": "system", "content": "You are a helpful assistant. Use the provided context to answer questions."},

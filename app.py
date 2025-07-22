@@ -12,7 +12,7 @@ from pinecone import Pinecone, ServerlessSpec
 # ========== CONFIG ==========
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_OPENROUTER_API_KEY"
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_PINECONE_API_KEY"
-INDEX_NAME = "quiliffy-medical"
+index_name = "bot-medical"
 MODEL_NAME = "deepseek/deepseek-chat:free"
 HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
@@ -22,20 +22,18 @@ st.set_page_config(page_title="🧠 Quiliffy Medical Bot", layout="wide")
 st.title("🧠 Quiliffy Medical Assistant")
 
 # ========== PINECONE INIT ==========
-@st.cache_resource
-def init_pinecone_and_index():
-    pc = Pinecone(api_key=PINECONE_API_KEY)
+pc = Pinecone(api_key=PINECONE_API_KEY)
 
-    if INDEX_NAME not in pc.list_indexes().names():
-        pc.create_index(
-            name=INDEX_NAME,
-            dimension=768,
-            metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1")
-        )
-    index = pc.Index(INDEX_NAME)
-    return index
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=embedding_dim,
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")  # ✅ Free tier region
+    )
 
+# ✅ Connect to index
+index = pc.Index(index_name)
 # ========== HELPERS ==========
 @st.cache_data(show_spinner="📂 Loading repo files...")
 def get_text_files():

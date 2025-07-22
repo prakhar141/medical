@@ -23,18 +23,51 @@ st.set_page_config(page_title="🧠 Quiliffy Medical Bot", layout="wide")
 st.title("🧠 Quiliffy Medical Assistant")
 
 # ========== PINECONE INIT ==========
+import os
+from pinecone import Pinecone, ServerlessSpec
+
+# ✅ Load API key from env variable or directly use the key
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_API_KEY"
+index_name = "medical-bot"
+embedding_dim = 768  # Use 1536 if you're using models like `text-embedding-ada-002`
+
+# ✅ Initialize Pinecone client
 pc = Pinecone(api_key=PINECONE_API_KEY)
 
+# ✅ Create index if not exists
 if index_name not in pc.list_indexes().names():
     pc.create_index(
         name=index_name,
         dimension=embedding_dim,
         metric="cosine",
-        spec=ServerlessSpec(cloud="aws", region="us-east-1")  # ✅ Free tier region
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")  # Only allowed region for free tier
     )
 
-# ✅ Connect to index
+# ✅ Connect to the index
 index = pc.Index(index_name)
+import os
+from pinecone import Pinecone, ServerlessSpec
+
+# ✅ Load API key from env variable or directly use the key
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_API_KEY"
+index_name = "medical-bot"
+embedding_dim = 768  # Use 1536 if you're using models like `text-embedding-ada-002`
+
+# ✅ Initialize Pinecone client
+pc = Pinecone(api_key=PINECONE_API_KEY)
+
+# ✅ Create index if not exists
+if index_name not in pc.list_indexes().names():
+    pc.create_index(
+        name=index_name,
+        dimension=embedding_dim,
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region="us-east-1")  # Only allowed region for free tier
+    )
+
+# ✅ Connect to the index
+index = pc.Index(index_name)
+
 # ========== HELPERS ==========
 @st.cache_data(show_spinner="📂 Loading repo files...")
 def get_text_files():

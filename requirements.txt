@@ -6,5 +6,5 @@ sentence-transformers
 PyMuPDF
 huggingface_hub
 requests
-pinecone-client
+pinecone
 

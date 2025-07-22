@@ -13,13 +13,13 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
 MODEL_NAME = "deepseek/deepseek-chat:free"
 
 # Hugging Face Repo Config
-HF_REPO_ID = "prakharhub/bits-pdfs"  # Replace with your own repo
+HF_REPO_ID = "prakhar146/medical"  # Replace with your own repo
 HF_REPO_TYPE = "dataset"
 
 # ========== UI Setup ==========
 st.set_page_config(page_title="📄 Quiliffy", layout="wide")
 st.title("🎓 Welcome to Quiliffy")
-st.markdown("Ask anything like Bhawan Guide, Events, Clubs")
+st.markdown("Ask anything from your friendly Medico")
 
 # ========== Reset Button ==========
 if st.button("🔁 Reset Chat"):
@@ -28,7 +28,7 @@ if st.button("🔁 Reset Chat"):
     st.experimental_rerun()
 
 # ========== Load PDFs from Hugging Face ==========
-@st.cache_resource(show_spinner="📚 Fetching PDFs from Hugging Face...")
+@st.cache_resource(show_spinner="📚 Reading my books...")
 def build_vector_db_from_huggingface(repo_id=HF_REPO_ID, repo_type=HF_REPO_TYPE):
     docs = []
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
@@ -97,7 +97,7 @@ if not retriever:
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
-query = st.chat_input("💬 Ask something about the BITS…")
+query = st.chat_input("💬 Ask something about the Medical…")
 
 if query:
     with st.spinner("🤖 Thinking..."):

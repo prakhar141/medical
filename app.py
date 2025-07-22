@@ -2,14 +2,19 @@ import os
 import streamlit as st
 import requests
 from huggingface_hub import list_repo_files, hf_hub_download
-from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain.vectorstores import Pinecone
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 from transformers import pipeline
+import pinecone
 
 # ========== CONFIG ==========
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_OPENROUTER_API_KEY"
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_PINECONE_API_KEY"
+PINECONE_ENV = "gcp-starter"  # or your specific Pinecone environment
+INDEX_NAME = "quiliffy-medical"
+
 MODEL_NAME = "deepseek/deepseek-chat:free"
 HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
@@ -22,7 +27,15 @@ st.title("🧠 Quiliffy Medical Assistant")
 st.sidebar.title("🧭 Select Mode")
 mode = st.sidebar.radio("Choose what you want to do:", ["💬 Ask Questions", "📄 File Summary", "🧬 Extract Keywords"])
 
-# ========== HELPER FUNCTIONS ==========
+# ========== PINECONE INIT ==========
+@st.cache_resource
+def init_pinecone():
+    pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+    if INDEX_NAME not in pinecone.list_indexes():
+        pinecone.create_index(INDEX_NAME, dimension=768)
+    return pinecone.Index(INDEX_NAME)
+
+# ========== HELPERS ==========
 @st.cache_data(show_spinner="📂 Loading repo files...")
 def get_text_files():
     try:
@@ -31,10 +44,14 @@ def get_text_files():
         st.error(f"❌ Could not fetch files: {e}")
         return []
 
-@st.cache_resource(show_spinner="🔧 Creating Vector DB...")
+@st.cache_resource(show_spinner="🔧 Building Pinecone Vector DB...")
 def build_vector_db():
-    docs = []
+    index = init_pinecone()
+    embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
+    vectorstore = Pinecone(index, embedder.embed_query, "text")
+
     text_files = get_text_files()
+    docs = []
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
 
     for fname in text_files:
@@ -48,13 +65,12 @@ def build_vector_db():
         except Exception as e:
             st.warning(f"⚠️ Could not read `{fname}`: {e}")
 
-    if not docs:
+    if docs:
+        vectorstore.add_documents(docs)
+        return vectorstore.as_retriever(search_type="similarity", k=4)
+    else:
         st.error("❌ No documents found.")
         return None
-
-    embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
-    db = FAISS.from_documents(docs, embedder)
-    return db.as_retriever(search_type="similarity", k=4)
 
 def ask_llm(context, query):
     headers = {
@@ -82,7 +98,7 @@ retriever = build_vector_db()
 if not retriever:
     st.stop()
 
-# ========== OPTION 1: CHAT ==========
+# ========== CHAT ==========
 if mode == "💬 Ask Questions":
     query = st.chat_input("💬 Ask anything medical...")
 
@@ -108,7 +124,7 @@ if mode == "💬 Ask Questions":
             for src in chat["sources"]:
                 st.caption(f"📄 Source: `{src}`")
 
-# ========== OPTION 2: FILE SUMMARY ==========
+# ========== FILE SUMMARY ==========
 elif mode == "📄 File Summary":
     files = get_text_files()
     selected = st.selectbox("📂 Choose a file to summarize", files)
@@ -122,7 +138,7 @@ elif mode == "📄 File Summary":
                 st.markdown(f"### 📝 Summary of `{selected}`")
                 st.write(summary)
 
-# ========== OPTION 3: EXTRACT KEYWORDS ==========
+# ========== EXTRACT KEYWORDS ==========
 elif mode == "🧬 Extract Keywords":
     files = get_text_files()
     selected = st.selectbox("🧬 Choose a file to extract keywords", files)
@@ -133,7 +149,7 @@ elif mode == "🧬 Extract Keywords":
             with open(path, "r", encoding="utf-8") as f:
                 text = f.read()
                 ner_pipeline = get_keyword_pipeline()
-                entities = ner_pipeline(text[:2000])  # Limit for performance
+                entities = ner_pipeline(text[:2000])
                 unique_keywords = sorted(set(e['word'] for e in entities))
                 st.markdown(f"### 🧪 Keywords in `{selected}`")
                 st.write(", ".join(unique_keywords))

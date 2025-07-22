@@ -6,6 +6,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
+from transformers import pipeline
 
 # ========== CONFIG ==========
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
@@ -13,114 +14,129 @@ MODEL_NAME = "deepseek/deepseek-chat:free"
 HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
 
-# ========== UI ==========
-st.set_page_config(page_title="📄 Quiliffy", layout="wide")
-st.title("🎓 Welcome to Quiliffy")
-st.markdown("Ask anything from your friendly Medico")
+# ========== PAGE CONFIG ==========
+st.set_page_config(page_title="🩺 Quiliffy Medical Bot", layout="wide")
+st.title("🧠 Quiliffy Medical Assistant")
 
-if st.button("🔁 Reset Chat"):
-    for key in st.session_state.keys():
-        del st.session_state[key]
-    st.experimental_rerun()
+# ========== SIDEBAR ==========
+st.sidebar.title("🧭 Select Mode")
+mode = st.sidebar.radio("Choose what you want to do:", ["💬 Ask Questions", "📄 File Summary", "🧬 Extract Keywords"])
 
-# ========== LIST FILES ==========
-@st.cache_data(show_spinner="📂 Scanning Hugging Face repo...")
+# ========== HELPER FUNCTIONS ==========
+@st.cache_data(show_spinner="📂 Loading repo files...")
 def get_text_files():
     try:
-        all_files = list_repo_files(repo_id=HF_REPO_ID, repo_type=HF_REPO_TYPE)
-        return [f for f in all_files if f.endswith(".txt")]
+        return [f for f in list_repo_files(repo_id=HF_REPO_ID, repo_type=HF_REPO_TYPE) if f.endswith(".txt")]
     except Exception as e:
-        st.error(f"❌ Could not list files: {e}")
+        st.error(f"❌ Could not fetch files: {e}")
         return []
 
-# ========== BUILD VECTOR DB ==========
-@st.cache_resource(show_spinner="📚 Building vector database...")
+@st.cache_resource(show_spinner="🔧 Creating Vector DB...")
 def build_vector_db():
     docs = []
     text_files = get_text_files()
-    if not text_files:
-        st.warning("⚠️ No TXT files found in repo.")
-        return None
-
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
-    for text_name in text_files:
+
+    for fname in text_files:
         try:
-            file_path = hf_hub_download(repo_id=HF_REPO_ID, filename=text_name, repo_type=HF_REPO_TYPE)
-            with open(file_path, "r", encoding="utf-8") as f:
+            path = hf_hub_download(repo_id=HF_REPO_ID, filename=fname, repo_type=HF_REPO_TYPE)
+            with open(path, "r", encoding="utf-8") as f:
                 text = f.read()
                 chunks = splitter.split_text(text)
-                docs.extend([Document(page_content=chunk, metadata={"source": text_name}) for chunk in chunks])
-            st.markdown(f"✅ Loaded `{text_name}` ({len(chunks)} chunks)")
+                docs.extend([Document(page_content=chunk, metadata={"source": fname}) for chunk in chunks])
+            st.markdown(f"✅ `{fname}` loaded ({len(chunks)} chunks)")
         except Exception as e:
-            st.warning(f"⚠️ Error loading `{text_name}`: {e}")
+            st.warning(f"⚠️ Could not read `{fname}`: {e}")
 
     if not docs:
-        st.error("❌ No documents extracted.")
+        st.error("❌ No documents found.")
         return None
 
     embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
     db = FAISS.from_documents(docs, embedder)
     return db.as_retriever(search_type="similarity", k=4)
 
-# ========== API CALL ==========
-def ask_deepseek(context, query):
+def ask_llm(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "HTTP-Referer": "https://chat.openai.com",
-        "X-Title": "Text Chatbot"
+        "X-Title": "Quiliffy Bot"
     }
     messages = [
-        {"role": "system", "content": "You are a helpful assistant. Use the provided context to answer questions."},
+        {"role": "system", "content": "You are a helpful medical assistant. Use the provided context to answer the question."},
         {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
     ]
-    payload = {"model": MODEL_NAME, "messages": messages}
     try:
-        res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+        res = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={"model": MODEL_NAME, "messages": messages})
         res.raise_for_status()
         return res.json()["choices"][0]["message"]["content"]
     except Exception as e:
         return f"❌ API Error: {e}"
 
-# ========== LOAD RETRIEVER ==========
+@st.cache_resource
+def get_keyword_pipeline():
+    return pipeline("ner", model="dslim/bert-base-NER", grouped_entities=True)
+
+# ========== MAIN EXECUTION ==========
 retriever = build_vector_db()
 if not retriever:
     st.stop()
 
-# ========== CHAT STATE ==========
-if "chat" not in st.session_state:
-    st.session_state.chat = []
+# ========== OPTION 1: CHAT ==========
+if mode == "💬 Ask Questions":
+    query = st.chat_input("💬 Ask anything medical...")
 
-query = st.chat_input("💬 Ask something medical…")
+    if "chat" not in st.session_state:
+        st.session_state.chat = []
 
-if query:
-    with st.spinner("🤖 Thinking..."):
-        try:
-            docs = retriever.get_relevant_documents(query)
-            context = "\n\n".join(doc.page_content for doc in docs)
-            answer = ask_deepseek(context, query)
-        except Exception as e:
-            answer = f"❌ Error: {e}"
-        st.session_state.chat.append({
-            "question": query,
-            "answer": answer,
-            "sources": list(set(doc.metadata['source'] for doc in docs))
-        })
+    if query:
+        with st.spinner("🤖 Thinking..."):
+            try:
+                docs = retriever.get_relevant_documents(query)
+                context = "\n\n".join(doc.page_content for doc in docs)
+                answer = ask_llm(context, query)
+                sources = list(set(doc.metadata["source"] for doc in docs))
+                st.session_state.chat.append({"question": query, "answer": answer, "sources": sources})
+            except Exception as e:
+                st.error(f"❌ Error: {e}")
 
-# ========== DISPLAY ==========
-for chat in reversed(st.session_state.chat):
-    with st.chat_message("user"):
-        st.markdown(chat["question"])
-    with st.chat_message("assistant"):
-        st.markdown(chat["answer"])
-        for src in chat["sources"]:
-            st.caption(f"📄 Source: `{src}`")
+    for chat in reversed(st.session_state.chat):
+        with st.chat_message("user"):
+            st.markdown(chat["question"])
+        with st.chat_message("assistant"):
+            st.markdown(chat["answer"])
+            for src in chat["sources"]:
+                st.caption(f"📄 Source: `{src}`")
 
-# ========== FULL HISTORY ==========
-with st.expander("📜 Full Chat History"):
-    for i, chat in enumerate(st.session_state.chat):
-        st.markdown(f"**Q{i+1}:** {chat['question']}")
-        st.markdown(f"**A{i+1}:** {chat['answer']}")
-        st.markdown("---")
+# ========== OPTION 2: FILE SUMMARY ==========
+elif mode == "📄 File Summary":
+    files = get_text_files()
+    selected = st.selectbox("📂 Choose a file to summarize", files)
+
+    if selected:
+        with st.spinner("📝 Generating summary..."):
+            path = hf_hub_download(repo_id=HF_REPO_ID, filename=selected, repo_type=HF_REPO_TYPE)
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+                summary = ask_llm(text[:3000], "Give a summary of this medical content.")
+                st.markdown(f"### 📝 Summary of `{selected}`")
+                st.write(summary)
+
+# ========== OPTION 3: EXTRACT KEYWORDS ==========
+elif mode == "🧬 Extract Keywords":
+    files = get_text_files()
+    selected = st.selectbox("🧬 Choose a file to extract keywords", files)
+
+    if selected:
+        with st.spinner("🔍 Extracting medical keywords..."):
+            path = hf_hub_download(repo_id=HF_REPO_ID, filename=selected, repo_type=HF_REPO_TYPE)
+            with open(path, "r", encoding="utf-8") as f:
+                text = f.read()
+                ner_pipeline = get_keyword_pipeline()
+                entities = ner_pipeline(text[:2000])  # Limit for performance
+                unique_keywords = sorted(set(e['word'] for e in entities))
+                st.markdown(f"### 🧪 Keywords in `{selected}`")
+                st.write(", ".join(unique_keywords))
 
 # ========== FOOTER ==========
 st.markdown("""

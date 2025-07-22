@@ -12,7 +12,7 @@ st.markdown("<h1 style='text-align: center; color: #d6336c;'>The Great Curd Conf
 
 # Add image from GitHub
 image_url = "ChatGPT Image Jul 22, 2025, 06_55_09 PM.png"
-st.image(image_url, use_column_width=False, width=400, caption='A tale from the lockdown kitchen', output_format='JPEG')
+st.image(image_url, use_container_width=False, width=400, caption='A tale from the lockdown kitchen', output_format='JPEG')
 
 # Subtitle / Intro
 st.markdown(

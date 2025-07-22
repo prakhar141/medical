@@ -12,8 +12,8 @@ from pinecone import Pinecone, ServerlessSpec
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_OPENROUTER_API_KEY"
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_PINECONE_API_KEY"
 INDEX_NAME = "medical-bot"
-EMBEDDING_MODEL_NAME = "BAAI/bge-base-en"
-EMBEDDING_DIM = 768
+EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
+EMBEDDING_DIM = 384
 HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
 MODEL_NAME = "deepseek/deepseek-chat:free"

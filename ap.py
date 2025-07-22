@@ -11,7 +11,7 @@ st.set_page_config(
 st.markdown("<h1 style='text-align: center; color: #d6336c;'>The Great Curd Confusion</h1>", unsafe_allow_html=True)
 
 # Add image from GitHub
-image_url = "https://github.com/prakhar141/medical/blob/main/ChatGPT Image Jul 22, 2025, 06_55_09 PM.png?raw=true"
+image_url = "ChatGPT Image Jul 22, 2025, 06_55_09 PM.png"
 st.image(image_url, use_column_width=False, width=400, caption='A tale from the lockdown kitchen', output_format='JPEG')
 
 # Subtitle / Intro

@@ -10,7 +10,7 @@ from langchain.docstore.document import Document
 # ========== CONFIG ==========
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
 MODEL_NAME = "deepseek/deepseek-chat:free"
-HF_REPO_ID = "prakhar146/medical-text"
+HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
 
 # ========== UI ==========

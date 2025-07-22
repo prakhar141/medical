@@ -16,7 +16,8 @@ index_name = "bot-medical"
 MODEL_NAME = "deepseek/deepseek-chat:free"
 HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
-
+embedding_dim = 768  # ⚠️ Use 768 if you use BAAI/bge-base-en
+embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
 # ========== PAGE CONFIG ==========
 st.set_page_config(page_title="🧠 Quiliffy Medical Bot", layout="wide")
 st.title("🧠 Quiliffy Medical Assistant")

@@ -55,8 +55,8 @@ def ask_openrouter_llm(context, query):
     }
 
     system_prompt = (
-        "You are a medical assistant. Use the provided context strictly to answer the user’s query.\n"
-        "Respond in a simple, helpful way. If context is insufficient, say 'I'm not sure based on available data.'"
+        "You are a medical assistant. .\n"
+        "Respond in a simple, helpful way.'"
     )
 
     messages = [

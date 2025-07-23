@@ -9,7 +9,7 @@ from langchain.docstore.document import Document
 # ===================== CONFIGURATION =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
 MODEL_NAME = "deepseek/deepseek-r1-0528:free"
-DATASET_PATH = "Introduction to Deep lernning.txt"
+DATASET_PATH = "9789241599320_eng.txt"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 80
 EMBEDDING_MODEL = "BAAI/bge-base-en"

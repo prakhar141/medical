@@ -9,9 +9,9 @@ from langchain.docstore.document import Document
 # ===================== CONFIGURATION =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
 MODEL_NAME = "deepseek/deepseek-chat:free"
-DATASET_PATH = "The Gale Encyclopedia of Medicine.txt"
-CHUNK_SIZE = 10000
-CHUNK_OVERLAP = 1000
+DATASET_PATH = "Introduction to Deep lernning.txt.txt"
+CHUNK_SIZE = 500
+CHUNK_OVERLAP = 80
 EMBEDDING_MODEL = "BAAI/bge-base-en"
 TOP_K = 4
 

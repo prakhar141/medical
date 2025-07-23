@@ -9,7 +9,12 @@ from langchain.docstore.document import Document
 # ===================== CONFIGURATION =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
 MODEL_NAME = "deepseek/deepseek-r1-0528:free"
-DATASET_PATH = "9789241599320_eng.txt"
+TEXT_FILES = [
+    "97892415476592_eng.txt",
+    "WHO-MHP-HPS-EML-2023.01-eng.txt",
+    "WHO-MHP-HPS-EML-2023.02-eng.txt",
+    "9789241599320_eng.txt"
+]
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 80
 EMBEDDING_MODEL = "BAAI/bge-base-en"
@@ -18,7 +23,7 @@ TOP_K = 4
 # ===================== STREAMLIT UI =====================
 st.set_page_config(page_title="🩺 Medical Chatbot", layout="wide")
 st.title("🧠 Medical Chatbot from Encyclopedia 📄")
-st.markdown("Ask questions based on **The Gale Encyclopedia of Medicine**.")
+st.markdown("Ask questions based on **Multiple Trusted Medical Sources**.")
 
 if st.button("🔁 Reset Chat"):
     for key in st.session_state.keys():
@@ -27,36 +32,38 @@ if st.button("🔁 Reset Chat"):
 
 # ===================== VECTOR DB =====================
 @st.cache_resource(show_spinner="🔍 Indexing medical data... Please wait...")
-def build_vector_db_from_txt(txt_path=DATASET_PATH):
-    if not os.path.exists(txt_path):
-        st.error(f"❌ `{txt_path}` not found.")
-        st.stop()
+def build_vector_db_from_txts(txt_paths=TEXT_FILES):
+    all_docs = []
+    for path in txt_paths:
+        if not os.path.exists(path):
+            st.error(f"❌ `{path}` not found.")
+            st.stop()
 
-    with open(txt_path, "r", encoding="utf-8") as f:
-        full_text = f.read()
+        with open(path, "r", encoding="utf-8") as f:
+            full_text = f.read()
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
-    chunks = splitter.split_text(full_text)
-    docs = [Document(page_content=chunk, metadata={"source": txt_path}) for chunk in chunks]
+        splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+        chunks = splitter.split_text(full_text)
+        docs = [Document(page_content=chunk, metadata={"source": path}) for chunk in chunks]
+        all_docs.extend(docs)
 
     embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    vectordb = FAISS.from_documents(docs, embedder)
+    vectordb = FAISS.from_documents(all_docs, embedder)
 
     return vectordb.as_retriever(search_type="similarity", k=TOP_K)
 
-retriever = build_vector_db_from_txt()
+retriever = build_vector_db_from_txts()
 
 # ===================== LLM QUERY =====================
 def ask_openrouter_llm(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://chat.openai.com",  # Fake referer to comply
+        "HTTP-Referer": "https://chat.openai.com",
         "X-Title": "TXT Chatbot"
     }
 
     system_prompt = (
-        "You are a medical assistant. .\n"
-        "Respond in a simple, helpful way.'"
+        "You are a knowledgeable and kind medical assistant. Use the provided medical encyclopedia context to answer."
     )
 
     messages = [

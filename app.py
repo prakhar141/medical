@@ -1,101 +1,99 @@
 import os
+import fitz  # PyMuPDF
 import streamlit as st
 import requests
-from huggingface_hub import list_repo_files, hf_hub_download
+from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 
-# ========== CONFIG ========== #
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_OPENROUTER_API_KEY"
-EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-HF_REPO_ID = "prakhar146/medical"
-HF_REPO_TYPE = "dataset"
-MODEL_NAME = "deepseek/deepseek-chat-v3-0324:free"
+# ========== API Setup ==========
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
+MODEL_NAME = "deepseek/deepseek-chat:free"
 
-# ========== PAGE CONFIG ========== #
-st.set_page_config(page_title="🧠 Quiliffy Medical Bot", layout="wide")
-st.title("🧠 Quiliffy Medical Assistant")
+# ========== UI Setup ==========
+st.set_page_config(page_title="📄 Quiliffy", layout="wide")
+st.title("🎓 Welcome to Quiliffy")
+st.markdown("Ask anything like Bhawan Guide, Events, Clubs")
 
-# ========== HELPER FUNCTIONS ========== #
-@st.cache_data(show_spinner="📂 Loading repo files...")
-def get_text_files():
-    try:
-        return [f for f in list_repo_files(repo_id=HF_REPO_ID, repo_type=HF_REPO_TYPE) if f.endswith(".txt")]
-    except Exception as e:
-        st.error(f"❌ Could not fetch files: {e}")
-        return []
+# ========== Reset Button ==========
+if st.button("🔁 Reset Chat"):
+    for key in st.session_state.keys():
+        del st.session_state[key]
+    st.experimental_rerun()
 
-@st.cache_resource(show_spinner="🔧 Building Vector DB...")
-def build_vector_db():
-    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
-    vectorstore = FAISS.from_texts([], embedder)  # Empty store to start
-
-    text_files = get_text_files()
+# ========== Load PDFs from Current Directory ==========
+@st.cache_resource(show_spinner="📚 Preparing... Please wait.")
+def build_vector_db_from_folder(folder_path="."):
     docs = []
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
 
-    for fname in text_files:
-        try:
-            path = hf_hub_download(repo_id=HF_REPO_ID, filename=fname, repo_type=HF_REPO_TYPE)
-            with open(path, "r", encoding="utf-8") as f:
-                text = f.read()
-                chunks = splitter.split_text(text)
-                docs.extend([Document(page_content=chunk, metadata={"source": fname}) for chunk in chunks])
-            st.markdown(f"✅ `{fname}` loaded ({len(chunks)} chunks)")
-        except Exception as e:
-            st.warning(f"⚠️ Could not read `{fname}`: {e}")
+    for filename in os.listdir(folder_path):
+        if filename.endswith(".pdf"):
+            file_path = os.path.join(folder_path, filename)
 
-    if docs:
-        vectorstore.add_documents(docs)
-        return vectorstore.as_retriever(search_type="similarity", search_kwargs={"k": 4})
-    else:
-        st.error("❌ No documents found.")
-        return None
+            file_size_kb = round(os.path.getsize(file_path) / 1024, 2)
+            with fitz.open(file_path) as doc:
+                text = "\n".join([page.get_text() for page in doc])
+                page_count = len(doc)
+            #st.markdown(f"✅ Loaded **{filename}** — {file_size_kb} KB, {page_count} pages")
 
-def ask_llm(context, query):
+            chunks = splitter.split_text(text)
+            file_docs = [Document(page_content=chunk, metadata={"source": filename}) for chunk in chunks]
+            docs.extend(file_docs)
+
+    embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
+    vectordb = FAISS.from_documents(docs, embedder)
+    return vectordb.as_retriever(search_type="similarity", k=4)
+
+# ========== Ask Function ==========
+def ask_deepseek(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "HTTP-Referer": "https://chat.openai.com",
-        "X-Title": "Quiliffy Bot"
+        "X-Title": "PDF Chatbot"
     }
     messages = [
-        {"role": "system", "content": "You are a helpful medical assistant. Use the provided context to answer the question."},
+        {"role": "system", "content": "You are a helpful assistant. Use the provided context to answer questions."},
         {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
     ]
+    payload = {"model": MODEL_NAME, "messages": messages}
     try:
-        res = requests.post(
-            "https://openrouter.ai/api/v1/chat/completions",
-            headers=headers,
-            json={"model": MODEL_NAME, "messages": messages}
-        )
-        res.raise_for_status()
-        return res.json()["choices"][0]["message"]["content"]
+        response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
+        response.raise_for_status()
+        return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
         return f"❌ API Error: {e}"
 
-# ========== MAIN CHATBOT EXECUTION ========== #
-retriever = build_vector_db()
-if not retriever:
+# ========== Main ==========
+pdf_files = [f for f in os.listdir(".") if f.endswith(".pdf")]
+if not pdf_files:
+    st.warning("⚠️ No PDF files found in current directory.")
     st.stop()
 
-query = st.chat_input("💬 Ask anything medical...")
+retriever = build_vector_db_from_folder()
 
+# ========== Chat State ==========
 if "chat" not in st.session_state:
     st.session_state.chat = []
+
+query = st.chat_input("💬 Ask something about the BITS…")
 
 if query:
     with st.spinner("🤖 Thinking..."):
         try:
             docs = retriever.get_relevant_documents(query)
-            context = "\n\n".join(doc.page_content for doc in docs)
-            answer = ask_llm(context, query)
-            sources = list(set(doc.metadata["source"] for doc in docs))
-            st.session_state.chat.append({"question": query, "answer": answer, "sources": sources})
+            context = "\n\n".join([doc.page_content for doc in docs])
+            answer = ask_deepseek(context, query)
         except Exception as e:
-            st.error(f"❌ Error: {e}")
+            answer = f"❌ Error: {e}"
+        st.session_state.chat.append({
+            "question": query,
+            "answer": answer,
+            "sources": list(set([doc.metadata['source'] for doc in docs]))
+        })
 
+# ========== Display Chat ==========
 for chat in reversed(st.session_state.chat):
     with st.chat_message("user"):
         st.markdown(chat["question"])
@@ -104,7 +102,14 @@ for chat in reversed(st.session_state.chat):
         for src in chat["sources"]:
             st.caption(f"📄 Source: `{src}`")
 
-# ========== FOOTER ========== #
+# ========== Expandable Chat History ==========
+with st.expander("📜 Full Chat History"):
+    for i, chat in enumerate(st.session_state.chat):
+        st.markdown(f"**Q{i+1}:** {chat['question']}")
+        st.markdown(f"**A{i+1}:** {chat['answer']}")
+        st.markdown("---")
+
+# ========== Footer ==========
 st.markdown("""
 <hr style="margin-top: 40px;">
 <div style='text-align: center; color: #888; font-size: 14px;'>

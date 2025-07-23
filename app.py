@@ -61,11 +61,11 @@ def ask_deepseek(context, query):
         return f"❌ API Error: {e}"
 
 # ========== Main ==========
-if not os.path.exists("dataset.txt"):
+if not os.path.exists("The Gale Encyclopedia of Medicine.txt"):
     st.warning("⚠️ Please add `dataset.txt` to the current directory.")
     st.stop()
 
-retriever = build_vector_db_from_txt("dataset.txt")
+retriever = build_vector_db_from_txt("The Gale Encyclopedia of Medicine.txt")
 
 # ========== Chat ==========
 if "chat" not in st.session_state:

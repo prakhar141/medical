@@ -23,7 +23,7 @@ if st.button("🔁 Reset Chat"):
 
 # ========== Load .txt ==========
 @st.cache_resource(show_spinner="📚 Building vector store from .txt...")
-def build_vector_db_from_txt(txt_path="dataset.txt"):
+def build_vector_db_from_txt(txt_path="The Gale Encyclopedia of Medicine.txt"):
     if not os.path.exists(txt_path):
         st.error(f"❌ `{txt_path}` not found in current folder.")
         st.stop()

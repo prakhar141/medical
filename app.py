@@ -8,7 +8,7 @@ from langchain.docstore.document import Document
 
 # ===================== CONFIGURATION =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
-MODEL_NAME = "deepseek/deepseek-chat:free"
+MODEL_NAME = "deepseek/deepseek-r1-0528:free"
 DATASET_PATH = "Introduction to Deep lernning.txt"
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 80

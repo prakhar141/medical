@@ -21,8 +21,8 @@ EMBEDDING_MODEL = "BAAI/bge-base-en"
 TOP_K = 4
 
 # ===================== STREAMLIT UI =====================
-st.set_page_config(page_title="🩺 Medical Chatbot", layout="wide")
-st.title("🧠 Medical Chatbot from Encyclopedia 📄")
+st.set_page_config(page_title="🩺 Quiliffy Medico", layout="wide")
+st.title(" Medico 📄")
 st.markdown("Ask questions based on **Multiple Trusted Medical Sources**.")
 
 if st.button("🔁 Reset Chat"):

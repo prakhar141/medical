@@ -6,52 +6,64 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 
-# ========== API Setup ==========
+# ===================== CONFIGURATION =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
 MODEL_NAME = "deepseek/deepseek-chat:free"
+DATASET_PATH = "The Gale Encyclopedia of Medicine.txt"
+CHUNK_SIZE = 1000
+CHUNK_OVERLAP = 100
+EMBEDDING_MODEL = "BAAI/bge-base-en"
+TOP_K = 4
 
-# ========== UI Setup ==========
-st.set_page_config(page_title="📄 Text Chatbot", layout="wide")
-st.title("🧠 Text Chatbot from .txt File")
-st.markdown("Ask anything based on your dataset below:")
+# ===================== STREAMLIT UI =====================
+st.set_page_config(page_title="🩺 Medical Chatbot", layout="wide")
+st.title("🧠 Medical Chatbot from Encyclopedia 📄")
+st.markdown("Ask questions based on **The Gale Encyclopedia of Medicine**.")
 
-# ========== Reset ==========
 if st.button("🔁 Reset Chat"):
     for key in st.session_state.keys():
         del st.session_state[key]
     st.experimental_rerun()
 
-# ========== Load .txt ==========
-@st.cache_resource(show_spinner="📚 Building vector store from .txt...")
-def build_vector_db_from_txt(txt_path="The Gale Encyclopedia of Medicine.txt"):
+# ===================== VECTOR DB =====================
+@st.cache_resource(show_spinner="🔍 Indexing medical data... Please wait...")
+def build_vector_db_from_txt(txt_path=DATASET_PATH):
     if not os.path.exists(txt_path):
-        st.error(f"❌ `{txt_path}` not found in current folder.")
+        st.error(f"❌ `{txt_path}` not found.")
         st.stop()
 
     with open(txt_path, "r", encoding="utf-8") as f:
         full_text = f.read()
 
-    splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=100)
+    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     chunks = splitter.split_text(full_text)
-
     docs = [Document(page_content=chunk, metadata={"source": txt_path}) for chunk in chunks]
 
-    embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
+    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     vectordb = FAISS.from_documents(docs, embedder)
 
-    return vectordb.as_retriever(search_type="similarity", k=4)
+    return vectordb.as_retriever(search_type="similarity", k=TOP_K)
 
-# ========== Ask DeepSeek ==========
-def ask_deepseek(context, query):
+retriever = build_vector_db_from_txt()
+
+# ===================== LLM QUERY =====================
+def ask_openrouter_llm(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://chat.openai.com",
+        "HTTP-Referer": "https://chat.openai.com",  # Fake referer to comply
         "X-Title": "TXT Chatbot"
     }
+
+    system_prompt = (
+        "You are a medical assistant. Use the provided context strictly to answer the user’s query.\n"
+        "Respond in a simple, helpful way. If context is insufficient, say 'I'm not sure based on available data.'"
+    )
+
     messages = [
-        {"role": "system", "content": "You are a helpful assistant. Use the provided context to answer the user's question."},
+        {"role": "system", "content": system_prompt},
         {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
     ]
+
     payload = {"model": MODEL_NAME, "messages": messages}
     try:
         response = requests.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json=payload)
@@ -60,34 +72,28 @@ def ask_deepseek(context, query):
     except Exception as e:
         return f"❌ API Error: {e}"
 
-# ========== Main ==========
-if not os.path.exists("The Gale Encyclopedia of Medicine.txt"):
-    st.warning("⚠️ Please add `dataset.txt` to the current directory.")
-    st.stop()
-
-retriever = build_vector_db_from_txt("The Gale Encyclopedia of Medicine.txt")
-
-# ========== Chat ==========
+# ===================== CHAT LOGIC =====================
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
-query = st.chat_input("💬 Ask something based on the dataset...")
+query = st.chat_input("💬 Ask a medical question...")
 
 if query:
     with st.spinner("🤖 Thinking..."):
         try:
             docs = retriever.get_relevant_documents(query)
             context = "\n\n".join([doc.page_content for doc in docs])
-            answer = ask_deepseek(context, query)
+            answer = ask_openrouter_llm(context, query)
         except Exception as e:
             answer = f"❌ Error: {e}"
+
         st.session_state.chat.append({
             "question": query,
             "answer": answer,
             "sources": list(set([doc.metadata['source'] for doc in docs]))
         })
 
-# ========== Display ==========
+# ===================== DISPLAY =====================
 for chat in reversed(st.session_state.chat):
     with st.chat_message("user"):
         st.markdown(chat["question"])
@@ -96,18 +102,18 @@ for chat in reversed(st.session_state.chat):
         for src in chat["sources"]:
             st.caption(f"📄 Source: `{src}`")
 
-# ========== Chat History ==========
-with st.expander("📜 Chat History"):
+# ===================== CHAT HISTORY =====================
+with st.expander("📜 Chat History", expanded=False):
     for i, chat in enumerate(st.session_state.chat):
         st.markdown(f"**Q{i+1}:** {chat['question']}")
         st.markdown(f"**A{i+1}:** {chat['answer']}")
         st.markdown("---")
 
-# ========== Footer ==========
+# ===================== FOOTER =====================
 st.markdown("""
 <hr style="margin-top: 40px;">
 <div style='text-align: center; color: #888; font-size: 14px;'>
-    Made with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani · 
-    <br>📬 <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
+    Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani <br>
+    📬 <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
 </div>
 """, unsafe_allow_html=True)

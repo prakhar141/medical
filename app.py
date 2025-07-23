@@ -3,17 +3,13 @@ import streamlit as st
 import requests
 from huggingface_hub import list_repo_files, hf_hub_download
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain_community.vectorstores import Pinecone as LangchainPinecone
+from langchain.vectorstores import FAISS
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-from pinecone import Pinecone, ServerlessSpec
 
 # ========== CONFIG ========== #
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_OPENROUTER_API_KEY"
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or "YOUR_PINECONE_API_KEY"
-INDEX_NAME = "medical-bot"
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
-EMBEDDING_DIM = 384
 HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
 MODEL_NAME = "deepseek/deepseek-chat:free"
@@ -21,26 +17,6 @@ MODEL_NAME = "deepseek/deepseek-chat:free"
 # ========== PAGE CONFIG ========== #
 st.set_page_config(page_title="🧠 Quiliffy Medical Bot", layout="wide")
 st.title("🧠 Quiliffy Medical Assistant")
-
-# ========== PINECONE INIT FUNCTION ========== #
-def init_pinecone_and_index():
-    pc = Pinecone(api_key=PINECONE_API_KEY)
-    
-    # List existing indexes
-    existing_indexes = [index.name for index in pc.list_indexes()]  # Fixed index listing
-    
-    if INDEX_NAME not in existing_indexes:
-        pc.create_index(
-            name=INDEX_NAME,
-            dimension=EMBEDDING_DIM,
-            metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region="us-east-1")
-        )
-        st.success(f"Created new index: {INDEX_NAME}")
-    else:
-        st.info(f"Using existing index: {INDEX_NAME}")
-    
-    return pc.Index(INDEX_NAME)
 
 # ========== HELPER FUNCTIONS ========== #
 @st.cache_data(show_spinner="📂 Loading repo files...")
@@ -51,11 +27,10 @@ def get_text_files():
         st.error(f"❌ Could not fetch files: {e}")
         return []
 
-@st.cache_resource(show_spinner="🔧 Building Pinecone Vector DB...")
+@st.cache_resource(show_spinner="🔧 Building Vector DB...")
 def build_vector_db():
-    pinecone_index = init_pinecone_and_index()
     embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
-    vectorstore = LangchainPinecone(pinecone_index, embedder, "text")  # Fixed parameter order
+    vectorstore = FAISS.from_texts([], embedder)  # Empty store to start
 
     text_files = get_text_files()
     docs = []

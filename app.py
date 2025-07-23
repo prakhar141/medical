@@ -12,7 +12,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_OPENROUTER_API_KEY
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 HF_REPO_ID = "prakhar146/medical"
 HF_REPO_TYPE = "dataset"
-MODEL_NAME = "deepseek/deepseek-chat:free"
+MODEL_NAME = "deepseek/deepseek-chat-v3-0324:free"
 
 # ========== PAGE CONFIG ========== #
 st.set_page_config(page_title="🧠 Quiliffy Medical Bot", layout="wide")

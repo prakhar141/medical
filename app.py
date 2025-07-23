@@ -1,5 +1,4 @@
 import os
-import fitz  # PyMuPDF
 import streamlit as st
 import requests
 from langchain_community.vectorstores import FAISS
@@ -7,14 +6,15 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
 
-# ========== API Setup ==========
+# ========== Config ==========
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
 MODEL_NAME = "deepseek/deepseek-chat:free"
+EMBEDDING_MODEL = "BAAI/bge-base-en"
 
-# ========== UI Setup ==========
-st.set_page_config(page_title="📄 Quiliffy", layout="wide")
-st.title("🎓 Welcome to Quiliffy")
-st.markdown("Ask anything like Bhawan Guide, Events, Clubs")
+# ========== Streamlit UI Setup ==========
+st.set_page_config(page_title="📄 Quiliffy TXT", layout="wide")
+st.title("🩺 Medical Assistant - Quiliffy")
+st.markdown("Ask any medical question based on your uploaded dataset.")
 
 # ========== Reset Button ==========
 if st.button("🔁 Reset Chat"):
@@ -22,39 +22,34 @@ if st.button("🔁 Reset Chat"):
         del st.session_state[key]
     st.experimental_rerun()
 
-# ========== Load PDFs from Current Directory ==========
-@st.cache_resource(show_spinner="📚 Preparing... Please wait.")
-def build_vector_db_from_folder(folder_path="."):
+# ========== Build Vector DB from .txt Files ==========
+@st.cache_resource(show_spinner="📚 Processing .txt files...")
+def build_vector_db_from_txt(folder_path="."):
     docs = []
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
 
     for filename in os.listdir(folder_path):
-        if filename.endswith(".pdf"):
+        if filename.endswith(".txt"):
             file_path = os.path.join(folder_path, filename)
-
-            file_size_kb = round(os.path.getsize(file_path) / 1024, 2)
-            with fitz.open(file_path) as doc:
-                text = "\n".join([page.get_text() for page in doc])
-                page_count = len(doc)
-            #st.markdown(f"✅ Loaded **{filename}** — {file_size_kb} KB, {page_count} pages")
-
+            with open(file_path, "r", encoding="utf-8") as f:
+                text = f.read()
             chunks = splitter.split_text(text)
             file_docs = [Document(page_content=chunk, metadata={"source": filename}) for chunk in chunks]
             docs.extend(file_docs)
 
-    embedder = HuggingFaceEmbeddings(model_name="BAAI/bge-base-en")
+    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     vectordb = FAISS.from_documents(docs, embedder)
     return vectordb.as_retriever(search_type="similarity", k=4)
 
-# ========== Ask Function ==========
+# ========== LLM Query Function ==========
 def ask_deepseek(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "HTTP-Referer": "https://chat.openai.com",
-        "X-Title": "PDF Chatbot"
+        "X-Title": "Medical Chatbot"
     }
     messages = [
-        {"role": "system", "content": "You are a helpful assistant. Use the provided context to answer questions."},
+        {"role": "system", "content": "You are a helpful medical assistant. Use the provided context to answer questions accurately."},
         {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {query}"}
     ]
     payload = {"model": MODEL_NAME, "messages": messages}
@@ -65,19 +60,19 @@ def ask_deepseek(context, query):
     except Exception as e:
         return f"❌ API Error: {e}"
 
-# ========== Main ==========
-pdf_files = [f for f in os.listdir(".") if f.endswith(".pdf")]
-if not pdf_files:
-    st.warning("⚠️ No PDF files found in current directory.")
+# ========== Load Vector DB ==========
+txt_files = [f for f in os.listdir(".") if f.endswith(".txt")]
+if not txt_files:
+    st.warning("⚠️ No .txt files found in current directory.")
     st.stop()
 
-retriever = build_vector_db_from_folder()
+retriever = build_vector_db_from_txt()
 
 # ========== Chat State ==========
 if "chat" not in st.session_state:
     st.session_state.chat = []
 
-query = st.chat_input("💬 Ask something about the BITS…")
+query = st.chat_input("💬 Ask any medical question...")
 
 if query:
     with st.spinner("🤖 Thinking..."):
@@ -102,7 +97,7 @@ for chat in reversed(st.session_state.chat):
         for src in chat["sources"]:
             st.caption(f"📄 Source: `{src}`")
 
-# ========== Expandable Chat History ==========
+# ========== Full Chat History ==========
 with st.expander("📜 Full Chat History"):
     for i, chat in enumerate(st.session_state.chat):
         st.markdown(f"**Q{i+1}:** {chat['question']}")

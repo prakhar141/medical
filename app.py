@@ -10,10 +10,7 @@ from langchain.docstore.document import Document
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
 MODEL_NAME = "deepseek/deepseek-r1-0528:free"
 TEXT_FILES = [
-    "97892415476592_eng.txt",
-    "WHO-MHP-HPS-EML-2023.01-eng.txt",
-    "WHO-MHP-HPS-EML-2023.02-eng.txt",
-    "9789241599320_eng.txt"
+    "The Gale Encyclopedia of Medicine.txt"
 ]
 CHUNK_SIZE = 500
 CHUNK_OVERLAP = 80

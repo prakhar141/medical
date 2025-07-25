@@ -1,13 +1,14 @@
 import os
 import re
+import mmap
 import asyncio
 import httpx
 import streamlit as st
+from concurrent.futures import ThreadPoolExecutor
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
-from concurrent.futures import ThreadPoolExecutor
 
 # ===================== CONFIGURATION =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
@@ -15,12 +16,18 @@ MODEL_NAME = "deepseek/deepseek-r1-0528:free"
 TEXT_FILES = ["The Gale Encyclopedia of Medicine.txt"]
 CHUNK_SIZE = 1000
 CHUNK_OVERLAP = 150
-EMBEDDING_MODEL = "BAAI/bge-base-en-v1.5"
+EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 TOP_K = 5
 MAX_WORKERS = 4
-FILE_CHUNK_SIZE = 50000
+EMBEDDING_BATCH_SIZE = 256  # Increased batch size for embeddings
+PROCESSING_BLOCK_SIZE = 10 * 1024 * 1024  # 10MB processing blocks
 
-# Validate API key
+# Pre-compile regex patterns for faster text cleaning
+WHITESPACE_PATTERN = re.compile(r'\s+')
+QUOTE_PATTERN = re.compile(r'\u201c|\u201d')
+APOSTROPHE_PATTERN = re.compile(r'\u2019')
+
+# Validate API Key
 if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "YOUR_API_KEY":
     st.error("❌ OpenRouter API key missing. Please set it via environment or Streamlit secrets.")
     st.stop()
@@ -36,67 +43,86 @@ if st.button("🔁 Reset Chat"):
             del st.session_state[key]
     st.rerun()
 
-# ===================== TEXT CLEANING =====================
+# ===================== OPTIMIZED TEXT PROCESSING =====================
 def clean_text(text):
-    text = re.sub(r'\s+', ' ', text)
-    text = re.sub(r'\u201c|\u201d', '"', text)
-    text = re.sub(r'\u2019', "'", text)
+    """Optimized text cleaning with pre-compiled patterns"""
+    text = WHITESPACE_PATTERN.sub(' ', text)
+    text = QUOTE_PATTERN.sub('"', text)
+    text = APOSTROPHE_PATTERN.sub("'", text)
     return text.strip()
 
-def read_file_in_chunks(file_path):
-    with open(file_path, 'r', encoding='utf-8', errors='replace') as f:
-        while True:
-            chunk = f.read(FILE_CHUNK_SIZE)
-            if not chunk:
-                break
-            yield chunk
+def process_text_block(text_block, path, splitter):
+    """Process a block of text with cleaning and splitting"""
+    cleaned = clean_text(text_block)
+    return [(chunk, path) for chunk in splitter.split_text(cleaned)]
 
-# ===================== EMBEDDING IN PARALLEL =====================
-@st.cache_resource(show_spinner="🔍 Indexing medical data... This might take a while...")
+# ===================== HIGH-PERFORMANCE VECTOR DB BUILDER =====================
+@st.cache_resource(show_spinner="🔍 Indexing medical data...")
 def build_vector_db_from_txts(txt_paths=TEXT_FILES):
+    """Optimized vector DB builder using memory mapping and efficient batching"""
     splitter = RecursiveCharacterTextSplitter(
         chunk_size=CHUNK_SIZE,
         chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", "! ", "? ", "; ", ", ", " "],
+        separators=["\n\n", "\n", ". ", "! ", "? ", "; ", ", "],
         keep_separator=True
     )
 
     all_chunks = []
-    for path in txt_paths:
-        if not os.path.exists(path):
-            st.error(f"❌ File not found: `{path}`")
-            st.stop()
-        st.info(f"📖 Processing {os.path.basename(path)}...")
-        buffer = ""
-
-        for chunk in read_file_in_chunks(path):
-            buffer += chunk
-            if len(buffer) >= FILE_CHUNK_SIZE * 10:
-                buffer = clean_text(buffer)
-                chunks = splitter.split_text(buffer)
-                all_chunks.extend([(chunk, path) for chunk in chunks])
-                buffer = ""
-
-        if buffer:
-            buffer = clean_text(buffer)
-            chunks = splitter.split_text(buffer)
-            all_chunks.extend([(chunk, path) for chunk in chunks])
-
-    texts = [Document(page_content=c[0], metadata={"source": c[1]}) for c in all_chunks]
-    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-
-    # Embed in parallel
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        embeddings = list(executor.map(embedder.embed_query, [doc.page_content for doc in texts]))
+        futures = []
+        
+        for path in txt_paths:
+            if not os.path.exists(path):
+                st.error(f"❌ File not found: `{path}`")
+                st.stop()
+                
+            st.info(f"📖 Processing {os.path.basename(path)}...")
+            file_size = os.path.getsize(path)
+            
+            with open(path, 'r+', encoding='utf-8', errors='replace') as f:
+                # Memory map the file for faster access
+                with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
+                    # Process in 10MB blocks
+                    for offset in range(0, file_size, PROCESSING_BLOCK_SIZE):
+                        end = min(offset + PROCESSING_BLOCK_SIZE, file_size)
+                        block = mm[offset:end].decode('utf-8', errors='replace')
+                        
+                        # Submit block for processing
+                        future = executor.submit(
+                            process_text_block, 
+                            block, 
+                            path, 
+                            splitter
+                        )
+                        futures.append(future)
+        
+        # Collect results
+        for future in futures:
+            all_chunks.extend(future.result())
 
-    vectordb = FAISS.from_embeddings(embeddings, texts)
-    return vectordb.as_retriever(search_kwargs={"k": TOP_K})
+    # Create documents with metadata
+    docs = [Document(page_content=chunk, metadata={"source": path}) for chunk, path in all_chunks]
+    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    contents = [doc.page_content for doc in docs]
+    
+    # Batch embedding processing
+    embeddings = []
+    for i in range(0, len(contents), EMBEDDING_BATCH_SIZE):
+        batch = contents[i:i + EMBEDDING_BATCH_SIZE]
+        embeddings.extend(embedder.embed_documents(batch))
 
+    return FAISS.from_embeddings(
+        text_embeddings=list(zip(contents, embeddings)),
+        embedding=embedder,
+        metadatas=[doc.metadata for doc in docs]
+    ).as_retriever(search_kwargs={"k": TOP_K})
+
+# ===================== INITIALIZE VECTOR DB =====================
 if "vector_db" not in st.session_state:
     with st.spinner("🚀 Initializing medical knowledge base..."):
         st.session_state.vector_db = build_vector_db_from_txts()
 
-# ===================== LLM QUERY =====================
+# ===================== ASYNC LLM CALL =====================
 async def ask_openrouter_llm(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -137,7 +163,7 @@ async def ask_openrouter_llm(context, query):
         except Exception as e:
             return f"❌ Unexpected Error: {str(e)}"
 
-# ===================== CHAT LOGIC =====================
+# ===================== CHAT INTERFACE =====================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
@@ -170,7 +196,7 @@ if query:
                 "sources": []
             })
 
-# ===================== DISPLAY =====================
+# ===================== DISPLAY CHAT =====================
 for chat in st.session_state.chat_history:
     with st.chat_message("user"):
         st.markdown(f"**You:** {chat['question']}")
@@ -181,16 +207,6 @@ for chat in st.session_state.chat_history:
             with st.expander("📚 Reference Sources"):
                 for src in chat['sources']:
                     st.caption(f"📄 {os.path.basename(src)}")
-
-# ===================== DEBUGGING =====================
-with st.expander("🔍 Debug Options", expanded=False):
-    if st.session_state.chat_history:
-        st.subheader("Last Context Used")
-        st.text_area("Context",
-                     value=st.session_state.chat_history[-1].get("context", ""),
-                     height=300)
-    if st.checkbox("Show Session State"):
-        st.json(st.session_state)
 
 # ===================== FOOTER =====================
 st.markdown("""

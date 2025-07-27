@@ -78,7 +78,7 @@ async def compress_context(context, query):
     {context}
     """
     payload = {
-        "model": "mistralai/mistral-7b-instruct:free",
+        "model": "deepseek/deepseek-r1-0528:free",
         "messages": [{"role": "user", "content": prompt}],
         "temperature": 0.2,
         "max_tokens": 3000

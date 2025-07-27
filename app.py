@@ -197,7 +197,7 @@ async def ask_openrouter_llm(context, query):
         except Exception as e:
             return f"❌ Error: {str(e)}"
 
-if "vector_db" not in st.session_state:
+if "vector_db" not in st.session_state or "retriever" not in st.session_state:
     with st.spinner("🚀 Initializing medical knowledge base..."):
         vector_store = build_vector_db_from_txts()
         st.session_state.vector_db = vector_store

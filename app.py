@@ -178,6 +178,7 @@ async def ask_openrouter_llm(context, query):
          - Speak warmly and respectfully, like a doctor who cares deeply about their patient.
          - Provide responses that are structured, easy to follow, and reassuring.
          - Avoid technical jargon unless it's clearly explained.
+         - Use relevant emojis 
 
          Keep your tone human, kind, and professional — just like a real doctor in a clinic.
 

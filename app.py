@@ -187,7 +187,7 @@ async def ask_openrouter_llm(context, query):
          {context}
          """
 
-    )
+    
     messages = [
         {"role": "system", "content": system_prompt.format(context=context)},
         {"role": "user", "content": f"Question: {query}"}

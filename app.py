@@ -16,7 +16,7 @@ from langchain.docstore.document import Document
 # ===================== CONFIGURATION =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
 MODEL_NAME = "deepseek/deepseek-r1-0528:free"
-TEXT_FILES = ["The Gale Encyclopedia of Medicine.txt"]
+TEXT_FILES = ["The Gale Encyclopedia of Medicine.txt","Merck.txt"]
 CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 300
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
@@ -39,7 +39,7 @@ os.makedirs(FAISS_INDEX_DIR, exist_ok=True)
 
 st.set_page_config(page_title="🩺 Quiliffy Medico", layout="wide")
 st.title("Medico Assistant 📄")
-st.markdown("Ask questions based on **Multiple Trusted Medical Sources**.")
+st.markdown("Ask questions based on **your symptoms**.")
 
 if st.button("🔁 Reset Chat"):
     for key in list(st.session_state.keys()):
@@ -123,7 +123,7 @@ def build_vector_db_from_txts(txt_paths=TEXT_FILES):
     with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
         futures = []
         for path in txt_paths:
-            st.info(f"📖 Processing {os.path.basename(path)}...")
+            #st.info(f"📖 Processing {os.path.basename(path)}...")
             file_size = os.path.getsize(path)
             with open(path, 'r', encoding='utf-8', errors='replace') as f:
                 with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as mm:

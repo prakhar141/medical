@@ -9,3 +9,5 @@ requests
 pinecone==3.1.0
 pytesseract
 PyPDF2
+tesserocr
+pillow

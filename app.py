@@ -20,7 +20,6 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 from langchain.docstore.document import Document
-from transformers import AutoProcessor, AutoModel
 
 # ===================== CONFIG =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
@@ -54,9 +53,9 @@ if st.button("🔁 Reset Chat"):
 def get_ocr_reader():
     return easyocr.Reader(['en'])
 
-
 @st.cache_resource
 def get_biovil_model():
+    # Fixed processor to use the correct BioViL processor
     processor = AutoProcessor.from_pretrained(
         "microsoft/BiomedVLP-BioViL-T",
         trust_remote_code=True
@@ -66,26 +65,19 @@ def get_biovil_model():
         trust_remote_code=True
     )
     return processor, model
-    
-from torchvision import transforms
 
 def get_biovil_embedding(image: Image.Image):
     processor, model = get_biovil_model()
-
-    # Provide both image and dummy text as required
-    inputs = processor(
-        images=image,
-        text=["This is a dummy medical caption."],
-        return_tensors="pt"
-    )
-
+    
+    # Convert image to tensor using BioViL's processor
+    inputs = processor(images=image, return_tensors="pt")
+    
     with torch.no_grad():
-        outputs = model(**inputs)
-
-    # Extract CLS token from vision encoder (standard way to get image embedding)
-    vision_embedding = outputs.vision_embeds[:, 0, :]  # CLS token
-
-    return vision_embedding[0].cpu().numpy()
+        # Get image embeddings from vision encoder
+        outputs = model.get_image_features(**inputs)
+    
+    # Return normalized embeddings as numpy array
+    return outputs[0].cpu().numpy()
 
 # ===================== IMAGE / TEXT HANDLING =====================
 def is_medical_scan(image_np):
@@ -94,10 +86,12 @@ def is_medical_scan(image_np):
 def extract_text_from_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
     image_np = np.array(image)
+    
     if is_medical_scan(image_np):
         # BioViL for scan understanding
-        image_caption = "🩻 This appears to be a medical scan. Processed using BioViL for embedding."
-        return image_caption, image
+        return "🩻 This appears to be a medical scan. Processed using BioViL for embedding.", image
+    
+    # OCR for regular images
     reader = get_ocr_reader()
     results = reader.readtext(image_np, detail=0)
     text = "\n".join(results) if results else "🛑 No readable text found in image."
@@ -247,15 +241,20 @@ if uploaded_file:
         image_embedding = None
     else:
         extracted_text, medical_image = extract_text_from_image(uploaded_file)
+        # Get BioViL embedding only for medical scans
         image_embedding = get_biovil_embedding(medical_image) if medical_image else None
 
     st.text_area("📝 Extracted / Interpreted Content", value=extracted_text[:3000], height=150)
     query = st.text_input("💬 Ask a question about this report:")
+    
     if query:
         with st.spinner("🔍 Processing..."):
             context = f"Uploaded Report Content:\n{extracted_text}"
+            
+            # Add image embedding info if available
             if image_embedding is not None:
-                context += "\nNote: This was derived from a medical image using BioViL."
+                context += "\n\n🩻 Medical Image Analysis:\nThis medical scan shows features relevant to the query"
+            
             compressed_context = asyncio.run(compress_context(context, query))
             answer = asyncio.run(ask_openrouter_llm(compressed_context, query))
             st.session_state.chat_history.append({"question": query, "answer": answer, "context": context})

@@ -67,17 +67,20 @@ def get_biovil_model():
     )
     return processor, model
     
+from torchvision import transforms
+
 def get_biovil_embedding(image: Image.Image):
     processor, model = get_biovil_model()
 
-    inputs = processor(
-        images=image,
-        text=["This is dummy text for contrastive pairing."],
-        return_tensors="pt"
-    )
+    preprocess = transforms.Compose([
+        transforms.Resize((224, 224)),  # or whatever the model expects
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.5], std=[0.5])  # depends on model
+    ])
+    tensor = preprocess(image).unsqueeze(0)  # (1, C, H, W)
 
     with torch.no_grad():
-        embedding = model.get_image_features(**inputs)
+        embedding = model.get_image_features(pixel_values=tensor)
 
     return embedding[0].cpu().numpy()
 

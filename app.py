@@ -1,4 +1,3 @@
-# app.py
 import os
 import re
 import mmap
@@ -7,12 +6,10 @@ import httpx
 import hashlib
 import streamlit as st
 from PIL import Image
-from io import BytesIO
 import numpy as np
 import easyocr
 import torch
 from PyPDF2 import PdfReader
-from transformers import AutoProcessor, AutoModel
 from concurrent.futures import ThreadPoolExecutor
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -48,50 +45,21 @@ if st.button("🔁 Reset Chat"):
             del st.session_state[key]
     st.rerun()
 
-# ===================== MODELS =====================
+# ===================== OCR =====================
 @st.cache_resource
 def get_ocr_reader():
     return easyocr.Reader(['en'])
 
-from transformers import AutoModel
-import torchvision.transforms as T
-import torch
-
-@st.cache_resource
-def get_biovil_model():
-    model = AutoModel.from_pretrained("microsoft/BiomedVLP-BioViL-T")
-    return model
-
-def get_biovil_embedding(image: Image.Image):
-    model = get_biovil_model()
-
-    # Manual transform (adapt as needed based on model config)
-    transform = T.Compose([
-        T.Resize((224, 224)),  # common for ViT
-        T.ToTensor(),
-        T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # adjust if model expects different values
-    ])
-
-    image_tensor = transform(image).unsqueeze(0)  # shape: (1, 3, 224, 224)
-
-    with torch.no_grad():
-        vision_output = model.vision_encoder(pixel_values=image_tensor)
-
-    image_embedding = vision_output.last_hidden_state[:, 0, :]  # CLS token
-    return image_embedding[0].cpu().numpy()
-# ===================== IMAGE / TEXT HANDLING =====================
 def is_medical_scan(image_np):
-    return np.mean(image_np) < 100  # crude heuristic
+    return np.mean(image_np) < 100  # crude heuristic for grayscale/x-ray
 
 def extract_text_from_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
     image_np = np.array(image)
     
     if is_medical_scan(image_np):
-        # BioViL for scan understanding
-        return "🩻 This appears to be a medical scan. Processed using BioViL for embedding.", image
+        return "🩻 This appears to be a medical scan. OCR will attempt basic text extraction.", image
     
-    # OCR for regular images
     reader = get_ocr_reader()
     results = reader.readtext(image_np, detail=0)
     text = "\n".join(results) if results else "🛑 No readable text found in image."
@@ -109,6 +77,7 @@ def process_text_block(text_block, path, splitter):
     chunks = splitter.split_text(cleaned)
     return [(chunk, path) for chunk in chunks]
 
+# ===================== EMBEDDINGS + FAISS =====================
 @st.cache_resource(show_spinner="🔍 Indexing medical knowledge...")
 def build_vector_db_from_txts(txt_paths=TEXT_FILES):
     file_hash = hashlib.md5()
@@ -238,11 +207,8 @@ uploaded_file = st.file_uploader("📤 Upload a medical report (PDF or medical i
 if uploaded_file:
     if uploaded_file.type == "application/pdf":
         extracted_text = extract_text_from_pdf(uploaded_file)
-        image_embedding = None
     else:
-        extracted_text, medical_image = extract_text_from_image(uploaded_file)
-        # Get BioViL embedding only for medical scans
-        image_embedding = get_biovil_embedding(medical_image) if medical_image else None
+        extracted_text, _ = extract_text_from_image(uploaded_file)
 
     st.text_area("📝 Extracted / Interpreted Content", value=extracted_text[:3000], height=150)
     query = st.text_input("💬 Ask a question about this report:")
@@ -250,11 +216,6 @@ if uploaded_file:
     if query:
         with st.spinner("🔍 Processing..."):
             context = f"Uploaded Report Content:\n{extracted_text}"
-            
-            # Add image embedding info if available
-            if image_embedding is not None:
-                context += "\n\n🩻 Medical Image Analysis:\nThis medical scan shows features relevant to the query"
-            
             compressed_context = asyncio.run(compress_context(context, query))
             answer = asyncio.run(ask_openrouter_llm(compressed_context, query))
             st.session_state.chat_history.append({"question": query, "answer": answer, "context": context})

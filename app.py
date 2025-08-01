@@ -20,6 +20,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 from langchain.docstore.document import Document
+from transformers import AutoProcessor, AutoModelForImageClassification
 
 # ===================== CONFIG =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")

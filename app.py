@@ -1,4 +1,3 @@
-# 🚀 Enhanced Medico Assistant with Image & PDF Upload Support
 import os
 import re
 import mmap
@@ -8,7 +7,8 @@ import hashlib
 import streamlit as st
 from PIL import Image
 from io import BytesIO
-from pytesseract import image_to_string
+import numpy as np
+import easyocr
 from PyPDF2 import PdfReader
 from concurrent.futures import ThreadPoolExecutor
 from langchain_community.vectorstores import FAISS
@@ -68,9 +68,16 @@ def process_text_block(text_block, path, splitter):
             chunks.extend(splitter.split_text(section))
     return [(chunk, path) for chunk in chunks]
 
+@st.cache_resource
+def get_ocr_reader():
+    return easyocr.Reader(['en'])
+
 def extract_text_from_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
-    return image_to_string(image)
+    image_np = np.array(image)
+    reader = get_ocr_reader()
+    results = reader.readtext(image_np, detail=0)
+    return "\n".join(results)
 
 def extract_text_from_pdf(uploaded_file):
     reader = PdfReader(uploaded_file)

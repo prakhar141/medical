@@ -152,7 +152,7 @@ def load_biomedvlp():
 
 def query_medical_image_with_text(image: Image.Image, text: str) -> str:
     processor, model = load_biomedvlp()
-    inputs = processor(text=question, images=image, return_tensors="pt", padding=True)
+    inputs = processor(text=text, images=image, return_tensors="pt", padding=True)
     with torch.no_grad():
         outputs = model(**inputs)
     image_features = outputs.image_embeds[0]

@@ -53,27 +53,31 @@ if st.button("🔁 Reset Chat"):
 def get_ocr_reader():
     return easyocr.Reader(['en'])
 
-from transformers import AutoModel, AutoImageProcessor
+from transformers import AutoModel
 import torchvision.transforms as T
+import torch
 
+@st.cache_resource
 def get_biovil_model():
-    image_processor = AutoImageProcessor.from_pretrained("microsoft/BiomedVLP-BioViL-T")
     model = AutoModel.from_pretrained("microsoft/BiomedVLP-BioViL-T")
-    return image_processor, model
+    return model
 
 def get_biovil_embedding(image: Image.Image):
-    processor, model = get_biovil_model()
+    model = get_biovil_model()
 
-    # Process image
-    inputs = processor(images=image, return_tensors="pt")
+    # Manual transform (adapt as needed based on model config)
+    transform = T.Compose([
+        T.Resize((224, 224)),  # common for ViT
+        T.ToTensor(),
+        T.Normalize(mean=[0.5, 0.5, 0.5], std=[0.5, 0.5, 0.5])  # adjust if model expects different values
+    ])
 
-    # Forward pass through vision encoder only
+    image_tensor = transform(image).unsqueeze(0)  # shape: (1, 3, 224, 224)
+
     with torch.no_grad():
-        vision_output = model.vision_encoder(**inputs)
+        vision_output = model.vision_encoder(pixel_values=image_tensor)
 
-    # Get CLS token
-    image_embedding = vision_output.last_hidden_state[:, 0, :]  # (batch, seq_len, hidden)
-
+    image_embedding = vision_output.last_hidden_state[:, 0, :]  # CLS token
     return image_embedding[0].cpu().numpy()
 # ===================== IMAGE / TEXT HANDLING =====================
 def is_medical_scan(image_np):

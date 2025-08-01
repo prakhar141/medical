@@ -1,3 +1,5 @@
+# Modified Medico Assistant with BiomedVLP scan handling
+
 import os
 import re
 import mmap
@@ -11,6 +13,7 @@ import easyocr
 import torch
 from PyPDF2 import PdfReader
 from concurrent.futures import ThreadPoolExecutor
+from transformers import AutoProcessor, AutoModel
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -51,15 +54,15 @@ def get_ocr_reader():
     return easyocr.Reader(['en'])
 
 def is_medical_scan(image_np):
-    return np.mean(image_np) < 100  # crude heuristic for grayscale/x-ray
+    return np.mean(image_np) < 100  # crude grayscale heuristic
 
 def extract_text_from_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
     image_np = np.array(image)
-    
+
     if is_medical_scan(image_np):
-        return "🩻 This appears to be a medical scan. OCR will attempt basic text extraction.", image
-    
+        return "🩻 Detected medical scan. Text required to assist interpretation.", image
+
     reader = get_ocr_reader()
     results = reader.readtext(image_np, detail=0)
     text = "\n".join(results) if results else "🛑 No readable text found in image."
@@ -140,6 +143,23 @@ def create_retriever(vector_store):
         base_retriever=base_retriever
     )
 
+# ===================== BiomedVLP Scan Handler =====================
+@st.cache_resource
+def load_biomedvlp():
+    processor = AutoProcessor.from_pretrained("microsoft/BiomedVLP-BioViL-T")
+    model = AutoModel.from_pretrained("microsoft/BiomedVLP-BioViL-T")
+    return processor, model
+
+def query_medical_image_with_text(image: Image.Image, text: str) -> str:
+    processor, model = load_biomedvlp()
+    inputs = processor(text=text, images=image, return_tensors="pt")
+    with torch.no_grad():
+        outputs = model(**inputs)
+    image_features = outputs.image_embeds[0]
+    text_features = outputs.text_embeds[0]
+    similarity = torch.nn.functional.cosine_similarity(image_features, text_features, dim=0).item()
+    return f"🎉 BiomedVLP Confidence of alignment: {similarity:.2f}"
+
 # ===================== API CALLS =====================
 async def compress_context(context, query):
     headers = {
@@ -203,22 +223,29 @@ if "vector_db" not in st.session_state or "retriever" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-uploaded_file = st.file_uploader("📤 Upload a medical report (PDF or medical image)", type=["pdf", "jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("📄 Upload a medical report (PDF or medical image)", type=["pdf", "jpg", "jpeg", "png"])
 if uploaded_file:
     if uploaded_file.type == "application/pdf":
         extracted_text = extract_text_from_pdf(uploaded_file)
+        is_scan = False
+        image = None
     else:
-        extracted_text, _ = extract_text_from_image(uploaded_file)
+        extracted_text, image = extract_text_from_image(uploaded_file)
+        is_scan = image is not None
 
-    st.text_area("📝 Extracted / Interpreted Content", value=extracted_text[:3000], height=150)
+    st.text_area("📜 Extracted / Interpreted Content", value=extracted_text[:3000], height=150)
     query = st.text_input("💬 Ask a question about this report:")
-    
+
     if query:
         with st.spinner("🔍 Processing..."):
-            context = f"Uploaded Report Content:\n{extracted_text}"
-            compressed_context = asyncio.run(compress_context(context, query))
-            answer = asyncio.run(ask_openrouter_llm(compressed_context, query))
-            st.session_state.chat_history.append({"question": query, "answer": answer, "context": context})
+            if is_scan and image:
+                result = query_medical_image_with_text(image, query)
+                answer = f"🖊 Scan + Question Analysis:\n{result}"
+            else:
+                context = f"Uploaded Report Content:\n{extracted_text}"
+                compressed_context = asyncio.run(compress_context(context, query))
+                answer = asyncio.run(ask_openrouter_llm(compressed_context, query))
+            st.session_state.chat_history.append({"question": query, "answer": answer, "context": extracted_text})
 else:
     query = st.chat_input("💬 Ask any general medical question...")
     if query:

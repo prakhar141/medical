@@ -55,8 +55,8 @@ def get_ocr_reader():
 
 @st.cache_resource
 def get_biovil_model():
-    processor = AutoProcessor.from_pretrained("microsoft/biovil")
-    model = AutoModel.from_pretrained("microsoft/biovil")
+    processor = AutoProcessor.from_pretrained("microsoft/BiomedVLP-BioViL-T", trust_remote_code=True)
+    model = AutoModel.from_pretrained("microsoft/BiomedVLP-BioViL-T", trust_remote_code=True)
     return processor, model
 
 def get_biovil_embedding(image: Image.Image):

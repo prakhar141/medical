@@ -53,35 +53,28 @@ if st.button("🔁 Reset Chat"):
 def get_ocr_reader():
     return easyocr.Reader(['en'])
 
-@st.cache_resource
+from transformers import AutoModel, AutoImageProcessor
+import torchvision.transforms as T
+
 def get_biovil_model():
-    processor = AutoProcessor.from_pretrained(
-        "microsoft/BiomedVLP-BioViL-T",
-        trust_remote_code=True
-    )
-    model = AutoModel.from_pretrained(
-        "microsoft/BiomedVLP-BioViL-T",
-        trust_remote_code=True
-    )
-    return processor, model
+    image_processor = AutoImageProcessor.from_pretrained("microsoft/BiomedVLP-BioViL-T")
+    model = AutoModel.from_pretrained("microsoft/BiomedVLP-BioViL-T")
+    return image_processor, model
 
 def get_biovil_embedding(image: Image.Image):
     processor, model = get_biovil_model()
-    
-    # Provide both image and dummy text as required
-    inputs = processor(
-        images=image,
-        text=["This is a dummy medical caption."],  # Required text input
-        return_tensors="pt"
-    )
-    
-    with torch.no_grad():
-        # Get image embeddings from vision encoder
-        outputs = model.get_image_features(**inputs)
-    
-    # Return normalized embeddings as numpy array
-    return outputs[0].cpu().numpy()
 
+    # Process image
+    inputs = processor(images=image, return_tensors="pt")
+
+    # Forward pass through vision encoder only
+    with torch.no_grad():
+        vision_output = model.vision_encoder(**inputs)
+
+    # Get CLS token
+    image_embedding = vision_output.last_hidden_state[:, 0, :]  # (batch, seq_len, hidden)
+
+    return image_embedding[0].cpu().numpy()
 # ===================== IMAGE / TEXT HANDLING =====================
 def is_medical_scan(image_np):
     return np.mean(image_np) < 100  # crude heuristic

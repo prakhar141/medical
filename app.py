@@ -55,24 +55,29 @@ def get_ocr_reader():
 
 @st.cache_resource
 def get_biovil_model():
-    processor = AutoProcessor.from_pretrained("microsoft/BiomedVLP-BioViL-T", trust_remote_code=True)
-    model = AutoModel.from_pretrained("microsoft/BiomedVLP-BioViL-T", trust_remote_code=True)
+    processor = AutoProcessor.from_pretrained(
+        "microsoft/BiomedVLP-BioViL-T",
+        trust_remote_code=True
+    )
+    model = AutoModelForImageClassification.from_pretrained(
+        "microsoft/BiomedVLP-BioViL-T",
+        trust_remote_code=True
+    )
     return processor, model
-
 def get_biovil_embedding(image: Image.Image):
     processor, model = get_biovil_model()
-    
-    # BioViL expects both image and text_target
+
     inputs = processor(
         images=image,
-        text_target=["This is a dummy text."],  # required even if you only care about image
+        text=["This is dummy text for contrastive pairing."],
         return_tensors="pt"
     )
-    
+
     with torch.no_grad():
         embedding = model.get_image_features(**inputs)
 
     return embedding[0].cpu().numpy()
+
 
 # ===================== IMAGE / TEXT HANDLING =====================
 def is_medical_scan(image_np):

@@ -55,7 +55,6 @@ def get_ocr_reader():
 
 @st.cache_resource
 def get_biovil_model():
-    # Fixed processor to use the correct BioViL processor
     processor = AutoProcessor.from_pretrained(
         "microsoft/BiomedVLP-BioViL-T",
         trust_remote_code=True
@@ -69,8 +68,12 @@ def get_biovil_model():
 def get_biovil_embedding(image: Image.Image):
     processor, model = get_biovil_model()
     
-    # Convert image to tensor using BioViL's processor
-    inputs = processor(images=image, return_tensors="pt")
+    # Provide both image and dummy text as required
+    inputs = processor(
+        images=image,
+        text=["This is a dummy medical caption."],  # Required text input
+        return_tensors="pt"
+    )
     
     with torch.no_grad():
         # Get image embeddings from vision encoder

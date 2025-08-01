@@ -61,9 +61,17 @@ def get_biovil_model():
 
 def get_biovil_embedding(image: Image.Image):
     processor, model = get_biovil_model()
-    inputs = processor(images=image, return_tensors="pt")
+    
+    # BioViL expects both image and text_target
+    inputs = processor(
+        images=image,
+        text_target=["This is a dummy text."],  # required even if you only care about image
+        return_tensors="pt"
+    )
+    
     with torch.no_grad():
         embedding = model.get_image_features(**inputs)
+
     return embedding[0].cpu().numpy()
 
 # ===================== IMAGE / TEXT HANDLING =====================

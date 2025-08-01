@@ -31,21 +31,14 @@ EMBEDDING_BATCH_SIZE = 512
 PROCESSING_BLOCK_SIZE = 10 * 1024 * 1024
 FAISS_INDEX_DIR = "faiss_index"
 
-# Regex Patterns
-WHITESPACE_PATTERN = re.compile(r'\s+')
-QUOTE_PATTERN = re.compile(r'\u201c|\u201d')
-APOSTROPHE_PATTERN = re.compile(r'\u2019')
-HEADER_PATTERN = re.compile(r'\n[A-Z][A-Z\s]+\n')
-
 # ===================== STREAMLIT UI =====================
 st.set_page_config(page_title="🩺 Medico Assistant", layout="wide")
-st.title("🧠 Medico Assistant — PDF & Image Support")
+st.title("🧠 Medico Assistant — Universal Medical Query Solver")
 
 if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "YOUR_API_KEY":
     st.error("❌ OpenRouter API key missing. Please set it via environment or Streamlit secrets.")
     st.stop()
 
-# Reset
 if st.button("🔁 Reset Chat"):
     for key in list(st.session_state.keys()):
         if key != "vector_db":
@@ -53,35 +46,33 @@ if st.button("🔁 Reset Chat"):
     st.rerun()
 
 # ===================== HELPER FUNCTIONS =====================
-def clean_text(text):
-    text = WHITESPACE_PATTERN.sub(' ', text)
-    text = QUOTE_PATTERN.sub('"', text)
-    text = APOSTROPHE_PATTERN.sub("'", text)
-    return text.strip()
-
-def process_text_block(text_block, path, splitter):
-    cleaned = clean_text(text_block)
-    sections = HEADER_PATTERN.split(cleaned)
-    chunks = []
-    for section in sections:
-        if section.strip():
-            chunks.extend(splitter.split_text(section))
-    return [(chunk, path) for chunk in chunks]
-
 @st.cache_resource
 def get_ocr_reader():
     return easyocr.Reader(['en'])
 
+def is_medical_scan(image_np):
+    return np.mean(image_np) < 100  # crude heuristic
+
 def extract_text_from_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
     image_np = np.array(image)
+    if is_medical_scan(image_np):
+        return "🖼️ This appears to be a medical image (X-ray, MRI, ultrasound, etc.). No text detected."
     reader = get_ocr_reader()
     results = reader.readtext(image_np, detail=0)
-    return "\n".join(results)
+    return "\n".join(results) if results else "🛑 No readable text found in image."
 
 def extract_text_from_pdf(uploaded_file):
     reader = PdfReader(uploaded_file)
     return "\n".join([page.extract_text() or "" for page in reader.pages])
+
+def clean_text(text):
+    return re.sub(r'\s+', ' ', text).strip()
+
+def process_text_block(text_block, path, splitter):
+    cleaned = clean_text(text_block)
+    chunks = splitter.split_text(cleaned)
+    return [(chunk, path) for chunk in chunks]
 
 @st.cache_resource(show_spinner="🔍 Indexing medical knowledge...")
 def build_vector_db_from_txts(txt_paths=TEXT_FILES):
@@ -154,9 +145,7 @@ async def compress_context(context, query):
     prompt = f"""
     Compress the following medical context by removing redundant information while preserving 
     all critical facts and relationships related to the query: \"{query}\".
-
     Return ONLY the compressed version.
-
     Context:
     {context}
     """
@@ -184,7 +173,7 @@ async def ask_openrouter_llm(context, query):
         "X-Title": "Medico Assistant"
     }
     messages = [
-        {"role": "system", "content": f"You are a kind, trusted medical assistant. Use ONLY provided context to answer.Also provide relevant Emoji.Answer using famous bollywood dialogues\n---\nContext:\n{context}"},
+        {"role": "system", "content": f"You are a kind, trusted medical assistant. Use ONLY provided context to answer. Also provide relevant Emoji. Answer using famous bollywood dialogues.\n---\nContext:\n{context}"},
         {"role": "user", "content": f"Question: {query}"}
     ]
     async with httpx.AsyncClient(timeout=90.0) as client:
@@ -209,22 +198,22 @@ if "vector_db" not in st.session_state or "retriever" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-uploaded_file = st.file_uploader("📤 Upload a medical report (image or PDF)", type=["pdf", "jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("📤 Upload a medical report (PDF or medical image)", type=["pdf", "jpg", "jpeg", "png"])
 if uploaded_file:
     if uploaded_file.type == "application/pdf":
         extracted_text = extract_text_from_pdf(uploaded_file)
     else:
         extracted_text = extract_text_from_image(uploaded_file)
-    st.text_area("📝 Extracted Text", value=extracted_text[:3000], height=150)
+    st.text_area("📝 Extracted / Interpreted Content", value=extracted_text[:3000], height=150)
     query = st.text_input("💬 Ask a question about this report:")
     if query:
-        with st.spinner("🔍 Searching medical knowledge..."):
+        with st.spinner("🔍 Processing..."):
             context = f"Uploaded Report Content:\n{extracted_text}"
             compressed_context = asyncio.run(compress_context(context, query))
             answer = asyncio.run(ask_openrouter_llm(compressed_context, query))
             st.session_state.chat_history.append({"question": query, "answer": answer, "context": context})
 else:
-    query = st.chat_input("💬 Ask a general medical question...")
+    query = st.chat_input("💬 Ask any general medical question...")
     if query:
         docs = st.session_state.retriever.get_relevant_documents(query)
         context = "\n\n---\n\n".join([

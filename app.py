@@ -55,16 +55,18 @@ def get_ocr_reader():
     return easyocr.Reader(['en'])
 
 @st.cache_resource
+@st.cache_resource
 def get_biovil_model():
     processor = AutoProcessor.from_pretrained(
         "microsoft/BiomedVLP-BioViL-T",
         trust_remote_code=True
     )
-    model = AutoModelForImageClassification.from_pretrained(
+    model = AutoModel.from_pretrained(
         "microsoft/BiomedVLP-BioViL-T",
         trust_remote_code=True
     )
     return processor, model
+    
 def get_biovil_embedding(image: Image.Image):
     processor, model = get_biovil_model()
 

@@ -11,4 +11,5 @@ PyPDF2
 easyocr
 pillow
 timm
-transformers
+transformers==4.44.2
+

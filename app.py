@@ -1,3 +1,4 @@
+# app.py
 import os
 import re
 import mmap
@@ -9,7 +10,9 @@ from PIL import Image
 from io import BytesIO
 import numpy as np
 import easyocr
+import torch
 from PyPDF2 import PdfReader
+from transformers import AutoProcessor, AutoModel
 from concurrent.futures import ThreadPoolExecutor
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -18,7 +21,7 @@ from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 from langchain.docstore.document import Document
 
-# ===================== CONFIGURATION =====================
+# ===================== CONFIG =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
 MODEL_NAME = "deepseek/deepseek-r1-0528:free"
 TEXT_FILES = ["The Gale Encyclopedia of Medicine.txt", "Merck.txt"]
@@ -31,12 +34,12 @@ EMBEDDING_BATCH_SIZE = 512
 PROCESSING_BLOCK_SIZE = 10 * 1024 * 1024
 FAISS_INDEX_DIR = "faiss_index"
 
-# ===================== STREAMLIT UI =====================
+# ===================== UI =====================
 st.set_page_config(page_title="🩺 Medico Assistant", layout="wide")
 st.title("🧠 Medico Assistant — Universal Medical Query Solver")
 
 if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "YOUR_API_KEY":
-    st.error("❌ OpenRouter API key missing. Please set it via environment or Streamlit secrets.")
+    st.error("❌ OpenRouter API key missing.")
     st.stop()
 
 if st.button("🔁 Reset Chat"):
@@ -45,11 +48,25 @@ if st.button("🔁 Reset Chat"):
             del st.session_state[key]
     st.rerun()
 
-# ===================== HELPER FUNCTIONS =====================
+# ===================== MODELS =====================
 @st.cache_resource
 def get_ocr_reader():
     return easyocr.Reader(['en'])
 
+@st.cache_resource
+def get_biovil_model():
+    processor = AutoProcessor.from_pretrained("microsoft/biovil")
+    model = AutoModel.from_pretrained("microsoft/biovil")
+    return processor, model
+
+def get_biovil_embedding(image: Image.Image):
+    processor, model = get_biovil_model()
+    inputs = processor(images=image, return_tensors="pt")
+    with torch.no_grad():
+        embedding = model.get_image_features(**inputs)
+    return embedding[0].cpu().numpy()
+
+# ===================== IMAGE / TEXT HANDLING =====================
 def is_medical_scan(image_np):
     return np.mean(image_np) < 100  # crude heuristic
 
@@ -57,10 +74,13 @@ def extract_text_from_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
     image_np = np.array(image)
     if is_medical_scan(image_np):
-        return "🖼️ This appears to be a medical image (X-ray, MRI, ultrasound, etc.). No text detected."
+        # BioViL for scan understanding
+        image_caption = "🩻 This appears to be a medical scan. Processed using BioViL for embedding."
+        return image_caption, image
     reader = get_ocr_reader()
     results = reader.readtext(image_np, detail=0)
-    return "\n".join(results) if results else "🛑 No readable text found in image."
+    text = "\n".join(results) if results else "🛑 No readable text found in image."
+    return text, None
 
 def extract_text_from_pdf(uploaded_file):
     reader = PdfReader(uploaded_file)
@@ -136,6 +156,7 @@ def create_retriever(vector_store):
         base_retriever=base_retriever
     )
 
+# ===================== API CALLS =====================
 async def compress_context(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -173,7 +194,7 @@ async def ask_openrouter_llm(context, query):
         "X-Title": "Medico Assistant"
     }
     messages = [
-        {"role": "system", "content": f"You are a kind, trusted medical assistant. Use ONLY provided context to answer. Also provide relevant Emoji. Answer using famous bollywood dialogues.\n---\nContext:\n{context}"},
+        {"role": "system", "content": f"You are a kind, trusted medical assistant. Use ONLY provided context to answer. Also provide relevant Emoji. \n---\nContext:\n{context}"},
         {"role": "user", "content": f"Question: {query}"}
     ]
     async with httpx.AsyncClient(timeout=90.0) as client:
@@ -188,7 +209,7 @@ async def ask_openrouter_llm(context, query):
         except Exception as e:
             return f"❌ Error: {str(e)}"
 
-# ===================== MAIN CHAT SECTION =====================
+# ===================== CHAT SECTION =====================
 if "vector_db" not in st.session_state or "retriever" not in st.session_state:
     with st.spinner("🚀 Initializing medical knowledge base..."):
         vector_store = build_vector_db_from_txts()
@@ -202,13 +223,18 @@ uploaded_file = st.file_uploader("📤 Upload a medical report (PDF or medical i
 if uploaded_file:
     if uploaded_file.type == "application/pdf":
         extracted_text = extract_text_from_pdf(uploaded_file)
+        image_embedding = None
     else:
-        extracted_text = extract_text_from_image(uploaded_file)
+        extracted_text, medical_image = extract_text_from_image(uploaded_file)
+        image_embedding = get_biovil_embedding(medical_image) if medical_image else None
+
     st.text_area("📝 Extracted / Interpreted Content", value=extracted_text[:3000], height=150)
     query = st.text_input("💬 Ask a question about this report:")
     if query:
         with st.spinner("🔍 Processing..."):
             context = f"Uploaded Report Content:\n{extracted_text}"
+            if image_embedding is not None:
+                context += "\nNote: This was derived from a medical image using BioViL."
             compressed_context = asyncio.run(compress_context(context, query))
             answer = asyncio.run(ask_openrouter_llm(compressed_context, query))
             st.session_state.chat_history.append({"question": query, "answer": answer, "context": context})
@@ -223,7 +249,7 @@ else:
         answer = asyncio.run(ask_openrouter_llm(compressed_context, query))
         st.session_state.chat_history.append({"question": query, "answer": answer, "context": context})
 
-# ===================== DISPLAY HISTORY =====================
+# ===================== DISPLAY CHAT =====================
 for chat in st.session_state.chat_history:
     with st.chat_message("user"):
         st.markdown(f"**You:** {chat['question']}")

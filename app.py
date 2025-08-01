@@ -146,8 +146,8 @@ def create_retriever(vector_store):
 # ===================== BiomedVLP Scan Handler =====================
 @st.cache_resource
 def load_biomedvlp():
-    processor = AutoProcessor.from_pretrained("microsoft/BiomedVLP-BioViL-T")
-    model = AutoModel.from_pretrained("microsoft/BiomedVLP-BioViL-T")
+    processor = AutoProcessor.from_pretrained("microsoft/BiomedVLP-BioViL-T",trust_remote_code=True)
+    model = AutoModel.from_pretrained("microsoft/BiomedVLP-BioViL-T",trust_remote_code=True)
     return processor, model
 
 def query_medical_image_with_text(image: Image.Image, text: str) -> str:

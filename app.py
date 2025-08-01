@@ -72,13 +72,20 @@ from torchvision import transforms
 def get_biovil_embedding(image: Image.Image):
     processor, model = get_biovil_model()
 
-    inputs = processor(images=image, return_tensors="pt")
+    # Provide both image and dummy text as required
+    inputs = processor(
+        images=image,
+        text=["This is a dummy medical caption."],
+        return_tensors="pt"
+    )
 
-    # Use the internal vision encoder
     with torch.no_grad():
-        embedding = model.vision_encoder(**inputs).last_hidden_state[:, 0, :]  # CLS token
+        outputs = model(**inputs)
 
-    return embedding[0].cpu().numpy()
+    # Extract CLS token from vision encoder (standard way to get image embedding)
+    vision_embedding = outputs.vision_embeds[:, 0, :]  # CLS token
+
+    return vision_embedding[0].cpu().numpy()
 
 # ===================== IMAGE / TEXT HANDLING =====================
 def is_medical_scan(image_np):

@@ -54,7 +54,7 @@ if st.button("🔁 Reset Chat"):
 def get_ocr_reader():
     return easyocr.Reader(['en'])
 
-@st.cache_resource
+
 @st.cache_resource
 def get_biovil_model():
     processor = AutoProcessor.from_pretrained(
@@ -72,18 +72,13 @@ from torchvision import transforms
 def get_biovil_embedding(image: Image.Image):
     processor, model = get_biovil_model()
 
-    preprocess = transforms.Compose([
-        transforms.Resize((224, 224)),  # or whatever the model expects
-        transforms.ToTensor(),
-        transforms.Normalize(mean=[0.5], std=[0.5])  # depends on model
-    ])
-    tensor = preprocess(image).unsqueeze(0)  # (1, C, H, W)
+    inputs = processor(images=image, return_tensors="pt")
 
+    # Use the internal vision encoder
     with torch.no_grad():
-        embedding = model.get_image_features(pixel_values=tensor)
+        embedding = model.vision_encoder(**inputs).last_hidden_state[:, 0, :]  # CLS token
 
     return embedding[0].cpu().numpy()
-
 
 # ===================== IMAGE / TEXT HANDLING =====================
 def is_medical_scan(image_np):

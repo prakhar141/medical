@@ -6,8 +6,9 @@ sentence-transformers
 PyMuPDF
 huggingface_hub
 requests
-pinecone==3.1.0
 pytesseract
 PyPDF2
 easyocr
 pillow
+timm
+git+https://github.com/microsoft/BioViL.git

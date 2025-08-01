@@ -12,4 +12,4 @@ easyocr
 pillow
 timm
 transformers==4.44.2
-
+torchvision

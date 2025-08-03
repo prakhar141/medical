@@ -6,14 +6,13 @@ import streamlit as st
 from PIL import Image
 from PyPDF2 import PdfReader
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
-
 from langchain_community.vectorstores import Pinecone as LangchainPinecone
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 from langchain.docstore.document import Document
-import pinecone
+from pinecone import Pinecone, ServerlessSpec 
 
 # ===================== CONFIG =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
@@ -43,26 +42,24 @@ if st.button("🔄 Reset Chat"):
         if key != "vector_db":
             del st.session_state[key]
     st.rerun()
-
-# ===================== INIT PINECONE INDEX =====================
+# === PINECONE INITIALIZATION ===
 @st.cache_resource
 def initialize_pinecone_index():
-    pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
+    pc = Pinecone(api_key=PINECONE_API_KEY)  # ✅ New v3 init
 
-    # Check if index exists
-    indexes = [index.name for index in pc.list_indexes()]
-    if INDEX_NAME not in indexes:
+    # ✅ Check if index exists
+    existing_indexes = [index.name for index in pc.list_indexes()]
+    if INDEX_NAME not in existing_indexes:
         pc.create_index(
             name=INDEX_NAME,
             dimension=384,
             metric="cosine",
-            spec=pinecone.ServerlessSpec(cloud="aws", region=PINECONE_REGION)
+            spec=ServerlessSpec(cloud="aws", region=PINECONE_REGION)  # ✅ Correct spec object
         )
 
-    # You must now use the *host* instead of index name directly
+    # ✅ Get the correct host
     index_info = pc.describe_index(INDEX_NAME)
-    return pc.Index(host=index_info.host)
-
+    return pc.Index(host=index_info.host)  # ✅ Correct usage in v3
 # ===================== BLIP-2 LOADER =====================
 @st.cache_resource
 def load_blip2_model():

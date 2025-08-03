@@ -13,7 +13,7 @@ from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 from langchain.docstore.document import Document
 from pinecone import Pinecone, ServerlessSpec 
-
+import pinecone
 # ===================== CONFIG =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or st.secrets.get("PINECONE_API_KEY")
@@ -43,21 +43,21 @@ if st.button("🔄 Reset Chat"):
             del st.session_state[key]
     st.rerun()
 # === PINECONE INITIALIZATION ===
-from pinecone import Pinecone, ServerlessSpec
 
-pc = Pinecone(api_key=PINECONE_API_KEY)
 
-existing = [idx.name for idx in pc.list_indexes()]
-if INDEX_NAME not in existing:
-    pc.create_index(
+# Initialize Pinecone (v2 way)
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_REGION)  # e.g., "us-east1-gcp"
+
+# Check if index exists, else create
+if INDEX_NAME not in pinecone.list_indexes():
+    pinecone.create_index(
         name=INDEX_NAME,
         dimension=384,
-        metric="cosine",
-        spec=ServerlessSpec(cloud="aws", region=PINECONE_REGION)
+        metric="cosine"
     )
 
-idx_info = pc.describe_index(INDEX_NAME)
-index = pc.Index(host=idx_info.host)
+# Connect to the index
+index = pinecone.Index(INDEX_NAME)
 # ===================== BLIP-2 LOADER =====================
 @st.cache_resource
 def load_blip2_model():

@@ -6,13 +6,14 @@ import streamlit as st
 from PIL import Image
 from PyPDF2 import PdfReader
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
-from langchain_community.vectorstores import Pinecone as LangchainPinecone
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 from langchain.docstore.document import Document
-from pinecone import Pinecone, ServerlessSpec 
+from pinecone import Pinecone, ServerlessSpec
+import time
+
 # ===================== CONFIG =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or st.secrets.get("PINECONE_API_KEY")
@@ -25,6 +26,7 @@ CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 300
 TOP_K = 7
 INDEX_NAME = "medico"
+NAMESPACE = "medical-texts"
 
 # ===================== PAGE CONFIG =====================
 st.set_page_config(page_title="🩺 Medico Assistant", layout="wide")
@@ -38,25 +40,33 @@ if not OPENROUTER_API_KEY or not PINECONE_API_KEY:
 # ===================== RESET CHAT =====================
 if st.button("🔄 Reset Chat"):
     for key in list(st.session_state.keys()):
-        if key != "vector_db":
+        if key != "pinecone_index":
             del st.session_state[key]
     st.rerun()
-# === PINECONE INITIALIZATION ===
 
-pc = Pinecone(api_key=PINECONE_API_KEY)
+# ===================== PINECONE INITIALIZATION =====================
+@st.cache_resource
+def init_pinecone():
+    pc = Pinecone(api_key=PINECONE_API_KEY)
+    
+    # Create index if it doesn't exist
+    if INDEX_NAME not in [index.name for index in pc.list_indexes()]:
+        pc.create_index(
+            name=INDEX_NAME,
+            dimension=384,
+            metric="cosine",
+            spec=ServerlessSpec(cloud="aws", region=PINECONE_REGION)
+        )
+        # Wait for index to be ready
+        st.info("⏳ Creating Pinecone index...")
+        time.sleep(60)
+    
+    return pc.Index(INDEX_NAME)
 
-# === Create index if it doesn't exist ===
-if INDEX_NAME not in [index.name for index in pc.list_indexes()]:
-    pc.create_index(
-        name=INDEX_NAME,
-        dimension=384,
-        metric="cosine",
-        spec=ServerlessSpec(cloud="aws", region=PINECONE_REGION)
-    )
+if "pinecone_index" not in st.session_state:
+    st.session_state.pinecone_index = init_pinecone()
 
-
-index = pc.Index(INDEX_NAME)
- # ===================== BLIP-2 LOADER =====================
+# ===================== BLIP-2 LOADER =====================
 @st.cache_resource
 def load_blip2_model():
     processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
@@ -68,7 +78,7 @@ def load_blip2_model():
 
 def analyze_image_with_blip2(image: Image.Image, user_query: str) -> str:
     processor, model = load_blip2_model()
-    prompt = f"Question: {user_query}"
+    prompt = f"Question: {user_query} Answer:"
     inputs = processor(images=image, text=prompt, return_tensors="pt").to(model.device)
     with torch.no_grad():
         output_ids = model.generate(**inputs, max_new_tokens=200)
@@ -79,35 +89,61 @@ def extract_text_from_pdf(file) -> str:
     reader = PdfReader(file)
     return "\n".join([page.extract_text() or "" for page in reader.pages])
 
-# ===================== VECTOR DB =====================
+# ===================== VECTOR DB OPERATIONS =====================
 @st.cache_resource(show_spinner="🔍 Indexing medical texts...") 
 def build_vector_db(txt_paths=TEXT_FILES):
     embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     docs = []
-
+    vectors = []
+    ids = []
+    
+    # Create embeddings and prepare for upsert
+    doc_id = 0
     for path in txt_paths:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             text = f.read()
             chunks = splitter.split_text(text)
-            docs += [Document(page_content=chunk, metadata={"source": path}) for chunk in chunks]
+            for i, chunk in enumerate(chunks):
+                embedding = embedder.embed_query(chunk)
+                vectors.append({
+                    "id": f"doc_{doc_id}",
+                    "values": embedding,
+                    "metadata": {
+                        "text": chunk,
+                        "source": path
+                    }
+                })
+                ids.append(f"doc_{doc_id}")
+                doc_id += 1
+    
+    # Upsert to Pinecone
+    st.session_state.pinecone_index.upsert(vectors=vectors, namespace=NAMESPACE)
+    return True
 
-    return LangchainPinecone.from_documents(
-        documents=docs,
-        embedding=embedder,
-        index_name=INDEX_NAME
+def retrieve_documents(query: str) -> list:
+    embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
+    query_embedding = embedder.embed_query(query)
+    
+    # Pinecone query
+    results = st.session_state.pinecone_index.query(
+        vector=query_embedding,
+        top_k=TOP_K * 2,
+        include_metadata=True,
+        namespace=NAMESPACE
     )
-
-def create_retriever(vector_db):
-    base_retriever = vector_db.as_retriever(search_kwargs={"k": TOP_K * 2})
-    filter_ = EmbeddingsFilter(
-        embeddings=HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL),
-        similarity_threshold=0.75
-    )
-    return ContextualCompressionRetriever(
-        base_retriever=base_retriever,
-        base_compressor=filter_
-    )
+    
+    # Filter by similarity
+    filtered_docs = []
+    for match in results.matches:
+        if match.score >= 0.75:  # Similarity threshold
+            doc = Document(
+                page_content=match.metadata["text"],
+                metadata={"source": match.metadata["source"]}
+            )
+            filtered_docs.append(doc)
+    
+    return filtered_docs[:TOP_K]
 
 # ===================== LLM via OPENROUTER =====================
 async def ask_openrouter_llm(context, query):
@@ -137,10 +173,10 @@ async def ask_openrouter_llm(context, query):
         return f"❌ LLM Error: {e}"
 
 # ===================== INIT VECTOR DB =====================
-if "vector_db" not in st.session_state:
+if "vector_db_initialized" not in st.session_state:
     with st.spinner("⚙️ Initializing knowledge base..."):
-        st.session_state.vector_db = build_vector_db()
-        st.session_state.retriever = create_retriever(st.session_state.vector_db)
+        build_vector_db()
+        st.session_state.vector_db_initialized = True
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
@@ -158,7 +194,7 @@ if uploaded_file:
 
         if user_query:
             with st.spinner("🔍 Answering based on PDF..."):
-                docs = st.session_state.retriever.get_relevant_documents(user_query)
+                docs = retrieve_documents(user_query)
                 final_context = "\n---\n".join([doc.page_content for doc in docs])
                 answer = asyncio.run(ask_openrouter_llm(final_context, user_query))
                 st.session_state.chat_history.append({"question": user_query, "answer": answer})
@@ -179,10 +215,11 @@ if uploaded_file:
 else:
     general_query = st.chat_input("💬 Ask a general medical question...")
     if general_query:
-        docs = st.session_state.retriever.get_relevant_documents(general_query)
-        final_context = "\n---\n".join([doc.page_content for doc in docs])
-        answer = asyncio.run(ask_openrouter_llm(final_context, general_query))
-        st.session_state.chat_history.append({"question": general_query, "answer": answer})
+        with st.spinner("🧠 Thinking..."):
+            docs = retrieve_documents(general_query)
+            final_context = "\n---\n".join([doc.page_content for doc in docs])
+            answer = asyncio.run(ask_openrouter_llm(final_context, general_query))
+            st.session_state.chat_history.append({"question": general_query, "answer": answer})
 
 # ===================== DISPLAY CHAT =====================
 for chat in st.session_state.chat_history:

@@ -3,10 +3,11 @@ import asyncio
 import httpx
 import torch
 import streamlit as st
+import pinecone
 from PIL import Image
 from PyPDF2 import PdfReader
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import Pinecone
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.retrievers import ContextualCompressionRetriever
@@ -15,20 +16,24 @@ from langchain.docstore.document import Document
 
 # ===================== CONFIG =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or st.secrets.get("PINECONE_API_KEY")
+PINECONE_ENV = os.getenv("PINECONE_ENV") or st.secrets.get("PINECONE_ENV")
+
 MODEL_NAME = "deepseek/deepseek-r1-0528:free"
 TEXT_FILES = ["The Gale Encyclopedia of Medicine.txt", "Merck.txt"]
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 300
 TOP_K = 7
+INDEX_NAME = "medico-assistant"
 
 # ===================== PAGE CONFIG =====================
 st.set_page_config(page_title="🩺 Medico Assistant", layout="wide")
 st.title("🧠 Medico Assistant")
 
 # ===================== API KEY CHECK =====================
-if not OPENROUTER_API_KEY:
-    st.error("❌ OpenRouter API key missing.")
+if not OPENROUTER_API_KEY or not PINECONE_API_KEY or not PINECONE_ENV:
+    st.error("❌ Missing OpenRouter or Pinecone API keys.")
     st.stop()
 
 # ===================== RESET CHAT =====================
@@ -37,6 +42,11 @@ if st.button("🔄 Reset Chat"):
         if key != "vector_db":
             del st.session_state[key]
     st.rerun()
+
+# ===================== INIT PINECONE =====================
+pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
+if INDEX_NAME not in pinecone.list_indexes():
+    pinecone.create_index(name=INDEX_NAME, dimension=384, metric="cosine")  # 384 for MiniLM
 
 # ===================== BLIP-2 LOADER =====================
 @st.cache_resource
@@ -64,12 +74,14 @@ def build_vector_db(txt_paths=TEXT_FILES):
     embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
     docs = []
+
     for path in txt_paths:
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             text = f.read()
             chunks = splitter.split_text(text)
             docs += [Document(page_content=chunk, metadata={"source": path}) for chunk in chunks]
-    return FAISS.from_documents(docs, embedder)
+
+    return Pinecone.from_documents(docs, embedder, index_name=INDEX_NAME)
 
 def create_retriever(vector_db):
     base_retriever = vector_db.as_retriever(search_kwargs={"k": TOP_K * 2})
@@ -136,7 +148,6 @@ if uploaded_file:
                 final_context = f"Image Analysis Output:\n{visual_output}"
                 answer = asyncio.run(ask_openrouter_llm(final_context, user_query))
                 st.session_state.chat_history.append({"question": user_query, "answer": answer})
-
     else:
         st.error("❌ Unsupported file format.")
 

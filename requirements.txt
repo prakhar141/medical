@@ -11,7 +11,7 @@ PyPDF2
 easyocr
 pillow
 timm
-transformers==4.44.2
+transformers==4.35.0
 torchvision
 accelerate
 easyocr

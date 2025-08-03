@@ -44,9 +44,31 @@ if st.button("🔄 Reset Chat"):
     st.rerun()
 
 # ===================== INIT PINECONE =====================
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)
-if INDEX_NAME not in pinecone.list_indexes():
-    pinecone.create_index(name=INDEX_NAME, dimension=384, metric="cosine")  # 384 for MiniLM
+import os
+from pinecone import Pinecone, ServerlessSpec
+
+# Set up environment variables (or you can hardcode temporarily for testing)
+PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
+PINECONE_ENV = "us-east-1"  # Replace with your region from Pinecone console
+INDEX_NAME = "medico"       # Replace with your actual index name
+
+# Initialize Pinecone instance
+pc = Pinecone(api_key=PINECONE_API_KEY)
+
+# Check and create index if it doesn't exist
+if INDEX_NAME not in pc.list_indexes().names():
+    pc.create_index(
+        name=INDEX_NAME,
+        dimension=384,  # Use 384 for MiniLM
+        metric="cosine",
+        spec=ServerlessSpec(
+            cloud="aws",
+            region=PINECONE_ENV
+        )
+    )
+
+# Connect to the index
+index = pc.Index(INDEX_NAME)
 
 # ===================== BLIP-2 LOADER =====================
 @st.cache_resource

@@ -43,23 +43,21 @@ if st.button("🔄 Reset Chat"):
             del st.session_state[key]
     st.rerun()
 # === PINECONE INITIALIZATION ===
-@st.cache_resource
-def initialize_pinecone_index():
-    pc = Pinecone(api_key=PINECONE_API_KEY)  # ✅ New v3 init
+from pinecone import Pinecone, ServerlessSpec
 
-    # ✅ Check if index exists
-    existing_indexes = [index.name for index in pc.list_indexes()]
-    if INDEX_NAME not in existing_indexes:
-        pc.create_index(
-            name=INDEX_NAME,
-            dimension=384,
-            metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region=PINECONE_REGION)  # ✅ Correct spec object
-        )
+pc = Pinecone(api_key=PINECONE_API_KEY)
 
-    # ✅ Get the correct host
-    index_info = pc.describe_index(INDEX_NAME)
-    return pc.Index(host=index_info.host)  # ✅ Correct usage in v3
+existing = [idx.name for idx in pc.list_indexes()]
+if INDEX_NAME not in existing:
+    pc.create_index(
+        name=INDEX_NAME,
+        dimension=384,
+        metric="cosine",
+        spec=ServerlessSpec(cloud="aws", region=PINECONE_REGION)
+    )
+
+idx_info = pc.describe_index(INDEX_NAME)
+index = pc.Index(host=idx_info.host)
 # ===================== BLIP-2 LOADER =====================
 @st.cache_resource
 def load_blip2_model():

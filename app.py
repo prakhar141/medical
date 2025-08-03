@@ -11,7 +11,7 @@ from PIL import Image
 from PyPDF2 import PdfReader
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceEmbeddings
+from langchain_huggingface import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import EmbeddingsFilter

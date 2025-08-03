@@ -46,7 +46,7 @@ if st.button("🔄 Reset Chat"):
 
 
 # Initialize Pinecone (v2 way)
-pinecone.init(api_key=PINECONE_API_KEY, environment=PINECONE_ENV)  # e.g., "us-east1-gcp"
+pinecone.init(api_key=PINECONE_API_KEY, environment="us-east1-aws")  # e.g., "us-east1-gcp"
 
 # Check if index exists, else create
 if INDEX_NAME not in pinecone.list_indexes():

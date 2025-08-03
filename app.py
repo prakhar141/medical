@@ -3,21 +3,23 @@ import asyncio
 import httpx
 import torch
 import streamlit as st
-import pinecone
 from PIL import Image
 from PyPDF2 import PdfReader
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
-from langchain_community.vectorstores import Pinecone
+
+from langchain_community.vectorstores import Pinecone as LangchainPinecone
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 from langchain.docstore.document import Document
 
+from pinecone import Pinecone, ServerlessSpec
+
 # ===================== CONFIG =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
 PINECONE_API_KEY = os.getenv("PINECONE_API_KEY") or st.secrets.get("PINECONE_API_KEY")
-PINECONE_ENV = os.getenv("PINECONE_ENV") or st.secrets.get("PINECONE_ENV")
+PINECONE_REGION = os.getenv("PINECONE_ENV") or "us-east-1"  # Default fallback
 
 MODEL_NAME = "deepseek/deepseek-r1-0528:free"
 TEXT_FILES = ["The Gale Encyclopedia of Medicine.txt", "Merck.txt"]
@@ -32,8 +34,8 @@ st.set_page_config(page_title="🩺 Medico Assistant", layout="wide")
 st.title("🧠 Medico Assistant")
 
 # ===================== API KEY CHECK =====================
-if not OPENROUTER_API_KEY or not PINECONE_API_KEY or not PINECONE_ENV:
-    st.error("❌ Missing OpenRouter or Pinecone API keys.")
+if not OPENROUTER_API_KEY or not PINECONE_API_KEY:
+    st.error("❌ Missing OpenRouter or Pinecone API key.")
     st.stop()
 
 # ===================== RESET CHAT =====================
@@ -43,38 +45,31 @@ if st.button("🔄 Reset Chat"):
             del st.session_state[key]
     st.rerun()
 
-# ===================== INIT PINECONE =====================
-import os
-from pinecone import Pinecone, ServerlessSpec
+# ===================== INIT PINECONE INDEX =====================
+@st.cache_resource
+def initialize_pinecone_index():
+    pc = Pinecone(api_key=PINECONE_API_KEY)
 
-# Set up environment variables (or you can hardcode temporarily for testing)
-PINECONE_API_KEY = os.getenv("PINECONE_API_KEY")
-PINECONE_ENV = "us-east-1"  # Replace with your region from Pinecone console
-INDEX_NAME = "medico"       # Replace with your actual index name
-
-# Initialize Pinecone instance
-pc = Pinecone(api_key=PINECONE_API_KEY)
-
-# Check and create index if it doesn't exist
-if INDEX_NAME not in pc.list_indexes().names():
-    pc.create_index(
-        name=INDEX_NAME,
-        dimension=384,  # Use 384 for MiniLM
-        metric="cosine",
-        spec=ServerlessSpec(
-            cloud="aws",
-            region=PINECONE_ENV
+    if INDEX_NAME not in pc.list_indexes().names():
+        pc.create_index(
+            name=INDEX_NAME,
+            dimension=384,
+            metric="cosine",
+            spec=ServerlessSpec(cloud="aws", region=PINECONE_REGION)
         )
-    )
 
-# Connect to the index
-index = pc.Index(INDEX_NAME)
+    return pc.Index(INDEX_NAME)
+
+pinecone_index = initialize_pinecone_index()
 
 # ===================== BLIP-2 LOADER =====================
 @st.cache_resource
 def load_blip2_model():
     processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
-    model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-opt-2.7b", torch_dtype=torch.float16)
+    model = Blip2ForConditionalGeneration.from_pretrained(
+        "Salesforce/blip2-opt-2.7b",
+        torch_dtype=torch.float16
+    )
     return processor, model.to("cuda" if torch.cuda.is_available() else "cpu")
 
 def analyze_image_with_blip2(image: Image.Image, user_query: str) -> str:
@@ -91,7 +86,7 @@ def extract_text_from_pdf(file) -> str:
     return "\n".join([page.extract_text() or "" for page in reader.pages])
 
 # ===================== VECTOR DB =====================
-@st.cache_resource(show_spinner="🔍 Indexing medical texts...")
+@st.cache_resource(show_spinner="🔍 Indexing medical texts...") 
 def build_vector_db(txt_paths=TEXT_FILES):
     embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
     splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
@@ -103,12 +98,22 @@ def build_vector_db(txt_paths=TEXT_FILES):
             chunks = splitter.split_text(text)
             docs += [Document(page_content=chunk, metadata={"source": path}) for chunk in chunks]
 
-    return Pinecone.from_documents(docs, embedder, index_name=INDEX_NAME)
+    return LangchainPinecone.from_documents(
+        documents=docs,
+        embedding=embedder,
+        index_name=INDEX_NAME
+    )
 
 def create_retriever(vector_db):
     base_retriever = vector_db.as_retriever(search_kwargs={"k": TOP_K * 2})
-    filter_ = EmbeddingsFilter(embeddings=HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL), similarity_threshold=0.75)
-    return ContextualCompressionRetriever(base_retriever=base_retriever, base_compressor=filter_)
+    filter_ = EmbeddingsFilter(
+        embeddings=HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL),
+        similarity_threshold=0.75
+    )
+    return ContextualCompressionRetriever(
+        base_retriever=base_retriever,
+        base_compressor=filter_
+    )
 
 # ===================== LLM via OPENROUTER =====================
 async def ask_openrouter_llm(context, query):
@@ -123,12 +128,16 @@ async def ask_openrouter_llm(context, query):
     ]
     try:
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={
-                "model": MODEL_NAME,
-                "messages": messages,
-                "temperature": 0.3,
-                "max_tokens": 2000
-            })
+            response = await client.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json={
+                    "model": MODEL_NAME,
+                    "messages": messages,
+                    "temperature": 0.3,
+                    "max_tokens": 2000
+                }
+            )
             return response.json()["choices"][0]["message"]["content"]
     except Exception as e:
         return f"❌ LLM Error: {e}"
@@ -142,7 +151,7 @@ if "vector_db" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-# ===================== FILE UPLOAD LOGIC =====================
+# ===================== FILE UPLOAD =====================
 uploaded_file = st.file_uploader("📄 Upload medical report (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"])
 
 if uploaded_file:
@@ -170,9 +179,9 @@ if uploaded_file:
                 final_context = f"Image Analysis Output:\n{visual_output}"
                 answer = asyncio.run(ask_openrouter_llm(final_context, user_query))
                 st.session_state.chat_history.append({"question": user_query, "answer": answer})
+
     else:
         st.error("❌ Unsupported file format.")
-
 else:
     general_query = st.chat_input("💬 Ask a general medical question...")
     if general_query:
@@ -186,7 +195,7 @@ for chat in st.session_state.chat_history:
     with st.chat_message("user"):
         st.markdown(f"**You:** {chat['question']}")
     with st.chat_message("assistant"):
-        st.markdown(chat['answer'])
+        st.markdown(chat["answer"])
 
 # ===================== FOOTER =====================
 st.markdown("""

@@ -1,19 +1,15 @@
-# Modified Medico Assistant with BiomedVLP scan handling
-
 import os
 import re
-import mmap
 import asyncio
 import httpx
+import torch
 import hashlib
 import streamlit as st
-from PIL import Image
 import numpy as np
 import easyocr
-import torch
+from PIL import Image
 from PyPDF2 import PdfReader
-from concurrent.futures import ThreadPoolExecutor
-from transformers import AutoProcessor, AutoModel
+from transformers import Blip2Processor, Blip2ForConditionalGeneration
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
@@ -29,168 +25,71 @@ CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 300
 EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 TOP_K = 7
-MAX_WORKERS = 4
-EMBEDDING_BATCH_SIZE = 512
-PROCESSING_BLOCK_SIZE = 10 * 1024 * 1024
-FAISS_INDEX_DIR = "faiss_index"
 
 # ===================== UI =====================
 st.set_page_config(page_title="🩺 Medico Assistant", layout="wide")
-st.title("🧠 Medico Assistant — Universal Medical Query Solver")
+st.title("🧠 Medico Assistant")
 
-if not OPENROUTER_API_KEY or OPENROUTER_API_KEY == "YOUR_API_KEY":
+if not OPENROUTER_API_KEY:
     st.error("❌ OpenRouter API key missing.")
     st.stop()
 
-if st.button("🔁 Reset Chat"):
+if st.button("🔄 Reset Chat"):
     for key in list(st.session_state.keys()):
         if key != "vector_db":
             del st.session_state[key]
     st.rerun()
 
-# ===================== OCR =====================
+# ===================== BLIP-2 =====================
+@st.cache_resource
+def load_blip2_model():
+    processor = Blip2Processor.from_pretrained("Salesforce/blip2-opt-2.7b")
+    model = Blip2ForConditionalGeneration.from_pretrained("Salesforce/blip2-opt-2.7b", torch_dtype=torch.float16)
+    return processor, model.to("cuda" if torch.cuda.is_available() else "cpu")
+
+def analyze_image_with_blip2(image: Image.Image, user_query: str) -> str:
+    processor, model = load_blip2_model()
+    prompt = f"Question: {user_query}"
+    inputs = processor(images=image, text=prompt, return_tensors="pt").to(model.device)
+    with torch.no_grad():
+        output_ids = model.generate(**inputs, max_new_tokens=200)
+    return processor.decode(output_ids[0], skip_special_tokens=True)
+
+# ===================== OCR / PDF =====================
 @st.cache_resource
 def get_ocr_reader():
     return easyocr.Reader(['en'])
 
-def is_medical_scan(image_np):
-    return np.mean(image_np) < 100  # crude grayscale heuristic
+def extract_text_from_pdf(uploaded_file):
+    return "\n".join([page.extract_text() or "" for page in PdfReader(uploaded_file).pages])
 
 def extract_text_from_image(uploaded_file):
     image = Image.open(uploaded_file).convert("RGB")
     image_np = np.array(image)
+    if np.mean(image_np) < 100:  # crude grayscale test for scan
+        return "🩻 Detected medical scan. Understanding via vision model required.", image
+    results = get_ocr_reader().readtext(image_np, detail=0)
+    return "\n".join(results) or "🛑 No readable text found.", None
 
-    if is_medical_scan(image_np):
-        return "🩻 Detected medical scan. Text required to assist interpretation.", image
-
-    reader = get_ocr_reader()
-    results = reader.readtext(image_np, detail=0)
-    text = "\n".join(results) if results else "🛑 No readable text found in image."
-    return text, None
-
-def extract_text_from_pdf(uploaded_file):
-    reader = PdfReader(uploaded_file)
-    return "\n".join([page.extract_text() or "" for page in reader.pages])
-
-def clean_text(text):
-    return re.sub(r'\s+', ' ', text).strip()
-
-def process_text_block(text_block, path, splitter):
-    cleaned = clean_text(text_block)
-    chunks = splitter.split_text(cleaned)
-    return [(chunk, path) for chunk in chunks]
-
-# ===================== EMBEDDINGS + FAISS =====================
+# ===================== EMBEDDINGS =====================
 @st.cache_resource(show_spinner="🔍 Indexing medical knowledge...")
-def build_vector_db_from_txts(txt_paths=TEXT_FILES):
-    file_hash = hashlib.md5()
-    for path in txt_paths:
-        if not os.path.exists(path):
-            st.error(f"❌ File not found: `{path}`")
-            st.stop()
-        with open(path, 'rb') as f:
-            file_hash.update(f.read())
-    cache_key = file_hash.hexdigest()
-    cache_path = os.path.join(FAISS_INDEX_DIR, f"{cache_key}.faiss")
-
-    if os.path.exists(cache_path):
-        embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-        return FAISS.load_local(cache_path, embedder, allow_dangerous_deserialization=True)
-
-    splitter = RecursiveCharacterTextSplitter(
-        chunk_size=CHUNK_SIZE,
-        chunk_overlap=CHUNK_OVERLAP,
-        separators=["\n\n", "\n", ". ", "! ", "? ", "; ", ", "],
-        keep_separator=True
-    )
-
-    all_chunks = []
-    with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-        futures = []
-        for path in txt_paths:
-            file_size = os.path.getsize(path)
-            with open(path, 'r', encoding='utf-8', errors='replace') as f:
-                with mmap.mmap(f.fileno(), length=0, access=mmap.ACCESS_READ) as mm:
-                    for offset in range(0, file_size, PROCESSING_BLOCK_SIZE):
-                        block = mm[offset:min(offset + PROCESSING_BLOCK_SIZE, file_size)].decode('utf-8', errors='replace')
-                        futures.append(executor.submit(process_text_block, block, path, splitter))
-        for future in futures:
-            all_chunks.extend(future.result())
-
-    docs = [Document(page_content=chunk, metadata={"source": path}) for chunk, path in all_chunks]
+def build_vector_db(txt_paths=TEXT_FILES):
     embedder = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL)
-    contents = [doc.page_content for doc in docs]
-    embeddings = []
-    for i in range(0, len(contents), EMBEDDING_BATCH_SIZE):
-        embeddings.extend(embedder.embed_documents(contents[i:i + EMBEDDING_BATCH_SIZE]))
+    docs = []
+    splitter = RecursiveCharacterTextSplitter(chunk_size=CHUNK_SIZE, chunk_overlap=CHUNK_OVERLAP)
+    for path in txt_paths:
+        with open(path, 'r', encoding='utf-8', errors='ignore') as f:
+            text = f.read()
+            chunks = splitter.split_text(text)
+            docs.extend([Document(page_content=chunk, metadata={"source": path}) for chunk in chunks])
+    return FAISS.from_documents(docs, embedder)
 
-    vector_store = FAISS.from_embeddings(
-        text_embeddings=list(zip(contents, embeddings)),
-        embedding=embedder,
-        metadatas=[doc.metadata for doc in docs]
-    )
-    vector_store.save_local(cache_path)
-    return vector_store
+def create_retriever(vector_db):
+    base_retriever = vector_db.as_retriever(search_kwargs={"k": TOP_K * 2})
+    filter_ = EmbeddingsFilter(embeddings=HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL), similarity_threshold=0.75)
+    return ContextualCompressionRetriever(base_retriever=base_retriever, base_compressor=filter_)
 
-def create_retriever(vector_store):
-    base_retriever = vector_store.as_retriever(search_kwargs={"k": TOP_K * 3})
-    embeddings_filter = EmbeddingsFilter(
-        embeddings=HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL),
-        similarity_threshold=0.75
-    )
-    return ContextualCompressionRetriever(
-        base_compressor=embeddings_filter,
-        base_retriever=base_retriever
-    )
-
-# ===================== BiomedVLP Scan Handler =====================
-@st.cache_resource
-def load_biomedvlp():
-    processor = AutoProcessor.from_pretrained("microsoft/BiomedVLP-BioViL-T",trust_remote_code=True)
-    model = AutoModel.from_pretrained("microsoft/BiomedVLP-BioViL-T",trust_remote_code=True)
-    return processor, model
-
-def query_medical_image_with_text(image: Image.Image, text: str) -> str:
-    processor, model = load_biomedvlp()
-    inputs = processor(text=text, images=image, return_tensors="pt", padding=True)
-    with torch.no_grad():
-        outputs = model(**inputs)
-    image_features = outputs.image_embeds[0]
-    text_features = outputs.text_embeds[0]
-    similarity = torch.nn.functional.cosine_similarity(image_features, text_features, dim=0).item()
-    return f"🎉 BiomedVLP Confidence of alignment: {similarity:.2f}"
-
-# ===================== API CALLS =====================
-async def compress_context(context, query):
-    headers = {
-        "Authorization": f"Bearer {OPENROUTER_API_KEY}",
-        "HTTP-Referer": "https://chat.openai.com",
-        "X-Title": "Medico Assistant"
-    }
-    prompt = f"""
-    Compress the following medical context by removing redundant information while preserving 
-    all critical facts and relationships related to the query: \"{query}\".
-    Return ONLY the compressed version.
-    Context:
-    {context}
-    """
-    async with httpx.AsyncClient(timeout=90.0) as client:
-        try:
-            response = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json={
-                    "model": MODEL_NAME,
-                    "messages": [{"role": "user", "content": prompt}],
-                    "temperature": 0.2,
-                    "max_tokens": 3000
-                }
-            )
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
-        except Exception:
-            return context
-
+# ===================== LLM OPENROUTER =====================
 async def ask_openrouter_llm(context, query):
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -198,64 +97,61 @@ async def ask_openrouter_llm(context, query):
         "X-Title": "Medico Assistant"
     }
     messages = [
-        {"role": "system", "content": f"You are a kind, trusted medical assistant. Use ONLY provided context to answer. Also provide relevant Emoji. \n---\nContext:\n{context}"},
-        {"role": "user", "content": f"Question: {query}"}
+        {"role": "system", "content": f"You are a trusted medical assistant. Use ONLY this context:\n---\n{context}"},
+        {"role": "user", "content": query}
     ]
-    async with httpx.AsyncClient(timeout=90.0) as client:
+    async with httpx.AsyncClient(timeout=60.0) as client:
         try:
-            response = await client.post(
-                "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers,
-                json={"model": MODEL_NAME, "messages": messages, "temperature": 0.3, "max_tokens": 3000}
-            )
-            response.raise_for_status()
-            return response.json()["choices"][0]["message"]["content"]
+            resp = await client.post("https://openrouter.ai/api/v1/chat/completions", headers=headers, json={
+                "model": MODEL_NAME,
+                "messages": messages,
+                "temperature": 0.3,
+                "max_tokens": 2000
+            })
+            return resp.json()["choices"][0]["message"]["content"]
         except Exception as e:
-            return f"❌ Error: {str(e)}"
+            return f"❌ LLM Error: {str(e)}"
 
-# ===================== CHAT SECTION =====================
-if "vector_db" not in st.session_state or "retriever" not in st.session_state:
-    with st.spinner("🚀 Initializing medical knowledge base..."):
-        vector_store = build_vector_db_from_txts()
-        st.session_state.vector_db = vector_store
-        st.session_state.retriever = create_retriever(vector_store)
+# ===================== CHAT LOGIC =====================
+if "vector_db" not in st.session_state:
+    with st.spinner("⚙️ Initializing vector DB..."):
+        vector_db = build_vector_db()
+        st.session_state.vector_db = vector_db
+        st.session_state.retriever = create_retriever(vector_db)
 
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
-uploaded_file = st.file_uploader("📄 Upload a medical report (PDF or medical image)", type=["pdf", "jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("📄 Upload a report (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"])
+
 if uploaded_file:
     if uploaded_file.type == "application/pdf":
         extracted_text = extract_text_from_pdf(uploaded_file)
-        is_scan = False
         image = None
     else:
         extracted_text, image = extract_text_from_image(uploaded_file)
-        is_scan = image is not None
 
-    st.text_area("📜 Extracted / Interpreted Content", value=extracted_text[:3000], height=150)
-    query = st.text_input("💬 Ask a question about this report:")
+    st.text_area("📝 Extracted Content", value=extracted_text[:3000], height=160)
+    user_query = st.text_input("💬 Ask about this report:")
 
-    if query:
-        with st.spinner("🔍 Processing..."):
-            if is_scan and image:
-                result = query_medical_image_with_text(image, query)
-                answer = f"🖊 Scan + Question Analysis:\n{result}"
-            else:
-                context = f"Uploaded Report Content:\n{extracted_text}"
-                compressed_context = asyncio.run(compress_context(context, query))
-                answer = asyncio.run(ask_openrouter_llm(compressed_context, query))
-            st.session_state.chat_history.append({"question": query, "answer": answer, "context": extracted_text})
+    if user_query:
+        with st.spinner("🔍 Analyzing..."):
+            if image:  # Use BLIP-2
+                visual_understanding = analyze_image_with_blip2(image, user_query)
+                final_context = f"Image Analysis Result:\n{visual_understanding}"
+            else:  # Use extracted text
+                docs = st.session_state.retriever.get_relevant_documents(user_query)
+                final_context = "\n---\n".join([doc.page_content for doc in docs])
+
+            answer = asyncio.run(ask_openrouter_llm(final_context, user_query))
+            st.session_state.chat_history.append({"question": user_query, "answer": answer})
 else:
-    query = st.chat_input("💬 Ask any general medical question...")
-    if query:
-        docs = st.session_state.retriever.get_relevant_documents(query)
-        context = "\n\n---\n\n".join([
-            f"SOURCE: {doc.metadata['source']}\nCONTENT:\n{doc.page_content}" for doc in docs[:TOP_K]
-        ])
-        compressed_context = asyncio.run(compress_context(context, query))
-        answer = asyncio.run(ask_openrouter_llm(compressed_context, query))
-        st.session_state.chat_history.append({"question": query, "answer": answer, "context": context})
+    general_query = st.chat_input("💬 Ask a general medical question...")
+    if general_query:
+        docs = st.session_state.retriever.get_relevant_documents(general_query)
+        context = "\n---\n".join([doc.page_content for doc in docs])
+        answer = asyncio.run(ask_openrouter_llm(context, general_query))
+        st.session_state.chat_history.append({"question": general_query, "answer": answer})
 
 # ===================== DISPLAY CHAT =====================
 for chat in st.session_state.chat_history:
@@ -265,9 +161,9 @@ for chat in st.session_state.chat_history:
         st.markdown(chat['answer'])
 
 st.markdown("""
-<hr style="margin-top: 40px;">
-<div style='text-align: center; color: #888; font-size: 14px;'>
-    Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani <br>
-    📬 <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
+<hr>
+<div style='text-align: center; font-size: 13px; color: gray'>
+  Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani<br>
+  📬 <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
 </div>
 """, unsafe_allow_html=True)

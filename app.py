@@ -13,8 +13,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.retrievers import ContextualCompressionRetriever
 from langchain.retrievers.document_compressors import EmbeddingsFilter
 from langchain.docstore.document import Document
-
-from pinecone import Pinecone, ServerlessSpec
+import pinecone
 
 # ===================== CONFIG =====================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or st.secrets.get("OPENROUTER_API_KEY")
@@ -48,19 +47,21 @@ if st.button("🔄 Reset Chat"):
 # ===================== INIT PINECONE INDEX =====================
 @st.cache_resource
 def initialize_pinecone_index():
-    pc = Pinecone(api_key=PINECONE_API_KEY)
+    pc = pinecone.Pinecone(api_key=PINECONE_API_KEY)
 
-    if INDEX_NAME not in pc.list_indexes().names():
+    # Check if index exists
+    indexes = [index.name for index in pc.list_indexes()]
+    if INDEX_NAME not in indexes:
         pc.create_index(
             name=INDEX_NAME,
             dimension=384,
             metric="cosine",
-            spec=ServerlessSpec(cloud="aws", region=PINECONE_REGION)
+            spec=pinecone.ServerlessSpec(cloud="aws", region=PINECONE_REGION)
         )
 
-    return pc.Index(INDEX_NAME)
-
-pinecone_index = initialize_pinecone_index()
+    # You must now use the *host* instead of index name directly
+    index_info = pc.describe_index(INDEX_NAME)
+    return pc.Index(host=index_info.host)
 
 # ===================== BLIP-2 LOADER =====================
 @st.cache_resource

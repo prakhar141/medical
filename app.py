@@ -53,9 +53,14 @@ if INDEX_NAME not in [index.name for index in pc.list_indexes()]:
         metric="cosine",
         spec=ServerlessSpec(cloud="aws", region=PINECONE_REGION)
     )
+idx_info = pc.describe_index(INDEX_NAME)
 
 # === Connect to the index ===
-index = pc.Index(INDEX_NAME)
+#index = pc.Index(INDEX_NAME)
+ #Option B: connect by host
+
+
+index = pc.Index(host=idx_info.host)
 # ===================== BLIP-2 LOADER =====================
 @st.cache_resource
 def load_blip2_model():

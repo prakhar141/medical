@@ -16,3 +16,4 @@ PyMuPDF
 easyocr
 pillow
 opencv-python-headless
+pinecone-client>=3.0.0      

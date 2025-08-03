@@ -13,3 +13,7 @@ pillow
 timm
 transformers==4.44.2
 torchvision
+accelerate
+easyocr
+opencv-python-headless
+asyncio

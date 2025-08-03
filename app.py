@@ -1,12 +1,9 @@
 import os
-import re
 import asyncio
 import httpx
 import torch
-import hashlib
 import streamlit as st
 import numpy as np
-import easyocr
 from PIL import Image
 from PyPDF2 import PdfReader
 from transformers import Blip2Processor, Blip2ForConditionalGeneration
@@ -55,21 +52,9 @@ def analyze_image_with_blip2(image: Image.Image, user_query: str) -> str:
         output_ids = model.generate(**inputs, max_new_tokens=200)
     return processor.decode(output_ids[0], skip_special_tokens=True)
 
-# ===================== OCR / PDF =====================
-@st.cache_resource
-def get_ocr_reader():
-    return easyocr.Reader(['en'])
-
+# ===================== PDF TEXT EXTRACT =====================
 def extract_text_from_pdf(uploaded_file):
     return "\n".join([page.extract_text() or "" for page in PdfReader(uploaded_file).pages])
-
-def extract_text_from_image(uploaded_file):
-    image = Image.open(uploaded_file).convert("RGB")
-    image_np = np.array(image)
-    if np.mean(image_np) < 100:  # crude grayscale test for scan
-        return "🩻 Detected medical scan. Understanding via vision model required.", image
-    results = get_ocr_reader().readtext(image_np, detail=0)
-    return "\n".join(results) or "🛑 No readable text found.", None
 
 # ===================== EMBEDDINGS =====================
 @st.cache_resource(show_spinner="🔍 Indexing medical knowledge...")
@@ -112,7 +97,7 @@ async def ask_openrouter_llm(context, query):
         except Exception as e:
             return f"❌ LLM Error: {str(e)}"
 
-# ===================== CHAT LOGIC =====================
+# ===================== INIT =====================
 if "vector_db" not in st.session_state:
     with st.spinner("⚙️ Initializing vector DB..."):
         vector_db = build_vector_db()
@@ -122,29 +107,32 @@ if "vector_db" not in st.session_state:
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 
+# ===================== FILE HANDLER =====================
 uploaded_file = st.file_uploader("📄 Upload a report (PDF or Image)", type=["pdf", "jpg", "jpeg", "png"])
 
 if uploaded_file:
-    if uploaded_file.type == "application/pdf":
-        extracted_text = extract_text_from_pdf(uploaded_file)
-        image = None
-    else:
-        extracted_text, image = extract_text_from_image(uploaded_file)
-
-    st.text_area("📝 Extracted Content", value=extracted_text[:3000], height=160)
     user_query = st.text_input("💬 Ask about this report:")
 
-    if user_query:
-        with st.spinner("🔍 Analyzing..."):
-            if image:  # Use BLIP-2
-                visual_understanding = analyze_image_with_blip2(image, user_query)
-                final_context = f"Image Analysis Result:\n{visual_understanding}"
-            else:  # Use extracted text
+    if uploaded_file.type == "application/pdf":
+        extracted_text = extract_text_from_pdf(uploaded_file)
+        st.text_area("📝 Extracted Content", value=extracted_text[:3000], height=160)
+
+        if user_query:
+            with st.spinner("🔍 Analyzing PDF with LLM..."):
                 docs = st.session_state.retriever.get_relevant_documents(user_query)
                 final_context = "\n---\n".join([doc.page_content for doc in docs])
+                answer = asyncio.run(ask_openrouter_llm(final_context, user_query))
+                st.session_state.chat_history.append({"question": user_query, "answer": answer})
+    else:
+        image = Image.open(uploaded_file).convert("RGB")
+        st.image(image, caption="Uploaded Image", use_column_width=True)
 
-            answer = asyncio.run(ask_openrouter_llm(final_context, user_query))
-            st.session_state.chat_history.append({"question": user_query, "answer": answer})
+        if user_query:
+            with st.spinner("🧠 Analyzing Image with BLIP-2 + LLM..."):
+                visual_result = analyze_image_with_blip2(image, user_query)
+                final_context = f"Visual Scan Output:\n{visual_result}"
+                answer = asyncio.run(ask_openrouter_llm(final_context, user_query))
+                st.session_state.chat_history.append({"question": user_query, "answer": answer})
 else:
     general_query = st.chat_input("💬 Ask a general medical question...")
     if general_query:

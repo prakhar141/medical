@@ -27,7 +27,7 @@ EMBEDDING_MODEL = "sentence-transformers/all-MiniLM-L6-v2"
 CHUNK_SIZE = 2000
 CHUNK_OVERLAP = 300
 TOP_K = 7
-INDEX_NAME = "medico-assistant"
+INDEX_NAME = "medico"
 
 # ===================== PAGE CONFIG =====================
 st.set_page_config(page_title="🩺 Medico Assistant", layout="wide")

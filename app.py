@@ -44,7 +44,10 @@ if st.button("🔄 Reset Chat"):
 @st.cache_resource
 def init_pinecone():
     pc = Pinecone(api_key=PINECONE_API_KEY)
-    if INDEX_NAME not in [index.name for index in pc.list_indexes()]:
+    try:
+        if INDEX_NAME in [index.name for index in pc.list_indexes()]:
+            pc.delete_index(INDEX_NAME)
+            time.sleep(5)
         pc.create_index(
             name=INDEX_NAME,
             dimension=384,
@@ -53,7 +56,10 @@ def init_pinecone():
         )
         st.info("⏳ Creating Pinecone index...")
         time.sleep(60)
-    return pc.Index(INDEX_NAME)
+        return pc.Index(INDEX_NAME)
+    except Exception as e:
+        st.error(f"❌ Pinecone Init Error: {e}")
+        st.stop()
 
 if "pinecone_index" not in st.session_state:
     st.session_state.pinecone_index = init_pinecone()

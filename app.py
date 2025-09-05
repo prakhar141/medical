@@ -79,21 +79,33 @@ def query_openrouter(model: str, messages: List[Dict[str, str]]) -> str:
 
 # ================== VANILLA RAG PIPELINE ==================
 def vanilla_rag_answer(question: str, lang: str = "English") -> str:
-    docs = retriever.get_relevant_documents(question)
-    context = "\n".join([doc.page_content for doc in docs]) if docs else "No relevant context found."
-    
-    prompt = [
-    {"role": "system", "content": f"You are Derma Buddy. Summarize advanced dermatology concepts like inflammatory skin diseases, nail and hair disorders, dermatopathology, and dermatologic therapeutics in micro-learning chunks.
+    try:
+        docs = retriever.get_relevant_documents(question)
+        context = "\n".join([doc.page_content for doc in docs]) if docs else "No relevant context found."
+        
+        prompt = [
+            {
+                "role": "system",
+                "content": (
+                    f"You are Derma Buddy. Summarize advanced dermatology concepts like "
+                    f"inflammatory skin diseases, nail and hair disorders, dermatopathology, "
+                    f"and dermatologic therapeutics in micro-learning chunks.\n\n"
+                    f"Act as a gamified quizmaster, offering adaptive problem-solving levels, "
+                    f"leaderboard challenges, and badges for clinical learning streaks.\n\n"
+                    f"Suggest 'clinic hacks' or exam shortcuts based on common mistakes and "
+                    f"best practices (ethically safe, medically accurate). Answer in {lang}."
+                )
+            },
+            {
+                "role": "user",
+                "content": f"Context:\n{context}\n\nQuestion: {question}"
+            }
+        ]
 
-Act as a gamified quizmaster, offering adaptive problem-solving levels, leaderboard challenges, and badges for clinical learning streaks.
+        return query_openrouter(MODEL_NAME, prompt)
 
-Suggest “clinic hacks” or exam shortcuts based on common mistakes and best practices (ethically safe, medically accurate). Answer in {lang}."},
-    
-    {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
-]
-
-    
-    return query_openrouter(MODEL_NAME, prompt)
+    except Exception as e:
+        return f"⚠️ An error occurred: {e}"
 
 # ================== CHAT INTERFACE ==================
 if "chat_history" not in st.session_state:

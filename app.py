@@ -8,6 +8,7 @@ from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain.docstore.document import Document
+import time
 
 # ================== CONFIG ==================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
@@ -23,7 +24,6 @@ PDF_FOLDER = BASE_DIR
 st.set_page_config(page_title="DermaConsult", layout="wide")
 st.title("🎓 DermaConsult")
 st.markdown("Your Friendly neighbourhood bot")
-import time
 
 def type_like_chatgpt(text, speed=0.004):
     """Types out the text character-by-character with a blinking cursor effect."""
@@ -78,7 +78,7 @@ def query_openrouter(model: str, messages: List[Dict[str, str]]) -> str:
     return json.dumps(data)
 
 # ================== VANILLA RAG PIPELINE ==================
-def vanilla_rag_answer(question: str, lang: str = "English") -> str:
+def vanilla_rag_answer(question: str) -> str:
     try:
         docs = retriever.get_relevant_documents(question)
         context = "\n".join([doc.page_content for doc in docs]) if docs else "No relevant context found."
@@ -87,13 +87,13 @@ def vanilla_rag_answer(question: str, lang: str = "English") -> str:
             {
                 "role": "system",
                 "content": (
-                    f"You are Derma Buddy. Summarize advanced dermatology concepts like "
-                    f"inflammatory skin diseases, nail and hair disorders, dermatopathology, "
-                    f"and dermatologic therapeutics in micro-learning chunks.\n\n"
-                    f"Act as a gamified quizmaster, offering adaptive problem-solving levels, "
-                    f"leaderboard challenges, and badges for clinical learning streaks.\n\n"
-                    f"Suggest 'clinic hacks' or exam shortcuts based on common mistakes and "
-                    f"best practices (ethically safe, medically accurate). Answer in {lang}."
+                    "You are Derma Buddy. Summarize advanced dermatology concepts like "
+                    "inflammatory skin diseases, nail and hair disorders, dermatopathology, "
+                    "and dermatologic therapeutics in micro-learning chunks.\n\n"
+                    "Act as a gamified quizmaster, offering adaptive problem-solving levels, "
+                    "leaderboard challenges, and badges for clinical learning streaks.\n\n"
+                    "Suggest 'clinic hacks' or exam shortcuts based on common mistakes and "
+                    "best practices (ethically safe, medically accurate). Answer in English."
                 )
             },
             {
@@ -110,19 +110,14 @@ def vanilla_rag_answer(question: str, lang: str = "English") -> str:
 # ================== CHAT INTERFACE ==================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
-
-language = st.selectbox("🌐 Response Language", ["English", "Hindi", "Telugu", "Tamil", "Marathi", "Bengali"])
-
-if "chat_history" not in st.session_state:
-    st.session_state.chat_history = []
 if "last_answer_animated" not in st.session_state:
     st.session_state.last_answer_animated = False
 
-if user_query := st.chat_input("Ask me about Organic Chemistry"):
+if user_query := st.chat_input("Ask me about Dermatology"):
     st.session_state.chat_history.append({"role": "user", "content": user_query})
 
     with st.spinner("Thinking..."):
-        answer = vanilla_rag_answer(user_query, lang=language)
+        answer = vanilla_rag_answer(user_query)
     
     st.session_state.chat_history.append({"role": "assistant", "content": answer})
     st.session_state.last_answer_animated = True
@@ -149,4 +144,3 @@ st.markdown("""
     <br>📬 Email: <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
 </div>
 """, unsafe_allow_html=True)
-

@@ -95,7 +95,7 @@ def vanilla_rag_answer(question: str) -> str:
         return query_openrouter(MODEL_NAME, prompt)
 
     except Exception as e:
-        return f"⚠️ An error occurred: {e}"
+        return f"⚠️ Servers Are Busy Try after sometime"
 
 # ================== CHAT INTERFACE ==================
 if "chat_history" not in st.session_state:

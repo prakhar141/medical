@@ -5,7 +5,6 @@ import streamlit as st
 from typing import List, Dict
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
-from langchain.docstore.document import Document
 import time
 
 # ================== CONFIG ==================
@@ -15,8 +14,8 @@ EMBED_MODEL = os.getenv("EMBED_MODEL") or "sentence-transformers/all-MiniLM-L6-v
 K_VAL = int(os.getenv("K_VAL") or 4)
 
 # Hugging Face URLs for the prebuilt vector store
-FAISS_INDEX_URL = "https://huggingface.co/datasets/prakhar146/derma/resolve/main/index.faiss"
-FAISS_PKL_URL = "https://huggingface.co/datasets/prakhar146/derma/resolve/main/index.pkl"
+FAISS_INDEX_URL = "https://huggingface.co/prakhar146/derma/resolve/main/index.faiss"
+FAISS_PKL_URL = "https://huggingface.co/prakhar146/derma/resolve/main/index.pkl"
 
 # Local directory to store downloaded files
 LOCAL_FAISS_DIR = "./faiss_store"
@@ -52,7 +51,11 @@ download_file(FAISS_PKL_URL, os.path.join(LOCAL_FAISS_DIR, "index.pkl"))
 @st.cache_resource
 def load_vector_db():
     embedder = HuggingFaceEmbeddings(model_name=EMBED_MODEL)
-    vectordb = FAISS.load_local(LOCAL_FAISS_DIR, embedder)
+    vectordb = FAISS.load_local(
+        LOCAL_FAISS_DIR,
+        embedder,
+        allow_dangerous_deserialization=True  # ⚠️ required for your trusted .pkl file
+    )
     return vectordb.as_retriever(search_type="similarity", k=K_VAL)
 
 retriever = load_vector_db()

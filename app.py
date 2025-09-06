@@ -87,7 +87,7 @@ def vanilla_rag_answer(question: str) -> str:
                 "Act as a gamified quizmaster, offering adaptive problem-solving levels, "
                 "leaderboard challenges, and badges for clinical learning streaks.\n\n"
                 "Suggest 'clinic hacks' or exam shortcuts based on common mistakes and "
-                "best practices (ethically safe, medically accurate). Answer in English."
+                "best practices (ethically safe, medically accurate). Answer in English.Answer questions related to dermatology only"
             )},
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
         ]

@@ -15,8 +15,8 @@ EMBED_MODEL = os.getenv("EMBED_MODEL") or "sentence-transformers/all-MiniLM-L6-v
 K_VAL = int(os.getenv("K_VAL") or 4)
 
 # Hugging Face URLs for the prebuilt vector store
-FAISS_INDEX_URL = "https://huggingface.co/prakhar146/derma/resolve/main/index.faiss"
-FAISS_PKL_URL = "https://huggingface.co/prakhar146/derma/resolve/main/index.pkl"
+FAISS_INDEX_URL = "https://huggingface.co/datasets/prakhar146/derma/resolve/main/index.faiss"
+FAISS_PKL_URL = "https://huggingface.co/datasets/prakhar146/derma/resolve/main/index.pkl"
 
 # Local directory to store downloaded files
 LOCAL_FAISS_DIR = "./faiss_store"

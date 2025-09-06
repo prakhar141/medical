@@ -16,9 +16,9 @@ MODEL_NAME = os.getenv("MODEL_NAME") or "deepseek/deepseek-r1-0528:free"
 EMBED_MODEL = os.getenv("EMBED_MODEL") or "sentence-transformers/all-MiniLM-L6-v2"
 K_VAL = int(os.getenv("K_VAL") or 4)
 
-# Path to repo root (where notes.pdf is located)
+# Path to repo root (where notes.pdf and .txt files are located)
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PDF_FOLDER = BASE_DIR
+DATASET_FOLDER = BASE_DIR
 
 # ================== STREAMLIT PAGE SETUP ==================
 st.set_page_config(page_title="DermaConsult", layout="wide")
@@ -42,17 +42,23 @@ def load_vector_db(folder: str):
     splitter = RecursiveCharacterTextSplitter(chunk_size=800, chunk_overlap=50)
 
     for file in os.listdir(folder):
-        if file.lower().endswith(".pdf"):
-            try:
-                with fitz.open(os.path.join(folder, file)) as doc:
+        file_path = os.path.join(folder, file)
+        try:
+            if file.lower().endswith(".pdf"):
+                with fitz.open(file_path) as doc:
                     text = "\n".join(page.get_text() for page in doc)
                     chunks = splitter.split_text(text)
                     docs.extend([Document(page_content=c, metadata={"source": file}) for c in chunks])
-            except Exception as e:
-                st.warning(f"Could not read {file}: {e}")
+            elif file.lower().endswith(".txt"):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    text = f.read()
+                    chunks = splitter.split_text(text)
+                    docs.extend([Document(page_content=c, metadata={"source": file}) for c in chunks])
+        except Exception as e:
+            st.warning(f"Could not read {file}: {e}")
 
     if not docs:
-        st.warning("No PDF documents found — retrieval will return nothing.")
+        st.warning("No documents found — retrieval will return nothing.")
         class EmptyRetriever:
             def get_relevant_documents(self, q): return []
         return EmptyRetriever()
@@ -62,7 +68,7 @@ def load_vector_db(folder: str):
     return vectordb.as_retriever(search_type="similarity", k=K_VAL)
 
 # Create retriever at startup
-retriever = load_vector_db(PDF_FOLDER)
+retriever = load_vector_db(DATASET_FOLDER)
 
 # ================== OPENROUTER HELPER ==================
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -126,7 +132,6 @@ if user_query := st.chat_input("Ask me about Dermatology"):
 # Show chat history
 for i, chat in enumerate(st.session_state.chat_history):
     with st.chat_message("user" if chat["role"] == "user" else "assistant"):
-        # Animate only the last assistant message, once
         if (
             i == len(st.session_state.chat_history) - 1
             and chat["role"] == "assistant"
@@ -137,8 +142,7 @@ for i, chat in enumerate(st.session_state.chat_history):
         else:
             st.markdown(chat["content"])
 
-st.markdown("""
-<hr style="margin-top: 40px;">
+st.markdown("""<hr style="margin-top: 40px;">
 <div style='text-align: center; color: #888; font-size: 14px;'>
     Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani · 
     <br>📬 Email: <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>

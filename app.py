@@ -6,6 +6,7 @@ from typing import List, Dict
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 import time
+import random
 
 # ================== CONFIG ==================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
@@ -23,17 +24,18 @@ os.makedirs(LOCAL_FAISS_DIR, exist_ok=True)
 
 # ================== STREAMLIT PAGE SETUP ==================
 st.set_page_config(page_title="DermaConsult", layout="wide")
-st.title("🎓 DermaConsult")
-st.markdown("Your Friendly neighbourhood bot")
+st.title("🐾 DermaConsult – Your Skin & Paw-sitive Guide")
+st.markdown("Helping dermatologists, with a little canine charm 🐶✨")
 
 def type_like_chatgpt(text, speed=0.004):
     placeholder = st.empty()
     animated = ""
     for c in text:
         animated += c
-        placeholder.markdown(animated + "|")
+        placeholder.markdown(animated + " |")
         time.sleep(speed)
-    placeholder.markdown(animated)
+    # Add 🐾 trail at the end
+    placeholder.markdown(animated + " 🐾")
 
 # ================== HELPER: Download Files ==================
 def download_file(url: str, local_path: str):
@@ -81,13 +83,15 @@ def vanilla_rag_answer(question: str) -> str:
         
         prompt = [
             {"role": "system", "content": (
-                "You are Derma Buddy. Summarize advanced dermatology concepts like "
+                "You are Derma Consult. Summarize advanced dermatology concepts like "
                 "inflammatory skin diseases, nail and hair disorders, dermatopathology, "
                 "and dermatologic therapeutics in micro-learning chunks.\n\n"
                 "Act as a gamified quizmaster, offering adaptive problem-solving levels, "
                 "leaderboard challenges, and badges for clinical learning streaks.\n\n"
                 "Suggest 'clinic hacks' or exam shortcuts based on common mistakes and "
-                "best practices (ethically safe, medically accurate). Answer in English.Answer questions related to dermatology only"
+                "best practices (ethically safe, medically accurate). "
+                "Sprinkle dog-inspired analogies where fun, but keep answers clinically accurate. "
+                "Answer in English. Answer questions related to dermatology only.Use "
             )},
             {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
         ]
@@ -97,16 +101,29 @@ def vanilla_rag_answer(question: str) -> str:
     except Exception as e:
         return f"⚠️ Servers Are Busy Try after sometime"
 
+# ================== DOGGY REACTIONS ==================
+DOG_EMOJIS = ["🐶", "🐕", "🐩", "🐾", "🦴"]
+
+def doggy_reaction():
+    st.markdown(f"### {random.choice(DOG_EMOJIS)} Thanks for the question!")
+
+def show_dog_pic():
+    try:
+        url = requests.get("https://dog.ceo/api/breeds/image/random").json()["message"]
+        st.image(url, caption="Here’s a little 🐶 break!", use_container_width=True)
+    except:
+        pass  # Fail silently if API is down
+
 # ================== CHAT INTERFACE ==================
 if "chat_history" not in st.session_state:
     st.session_state.chat_history = []
 if "last_answer_animated" not in st.session_state:
     st.session_state.last_answer_animated = False
 
-if user_query := st.chat_input("Ask me about Dermatology"):
+if user_query := st.chat_input("Ask me about Dermatology 🐾"):
     st.session_state.chat_history.append({"role": "user", "content": user_query})
 
-    with st.spinner("Thinking..."):
+    with st.spinner("Thinking... 🐕"):
         answer = vanilla_rag_answer(user_query)
     
     st.session_state.chat_history.append({"role": "assistant", "content": answer})
@@ -122,13 +139,18 @@ for i, chat in enumerate(st.session_state.chat_history):
             and st.session_state.last_answer_animated
         ):
             type_like_chatgpt(chat["content"])
+            doggy_reaction()
+            if random.random() < 0.2:  # 20% chance of showing a cute dog pic
+                show_dog_pic()
             st.session_state.last_answer_animated = False
         else:
             st.markdown(chat["content"])
 
-st.markdown("""<hr style="margin-top: 40px;">
+# ================== FOOTER ==================
+st.markdown("""
+<hr style="margin-top: 40px;">
 <div style='text-align: center; color: #888; font-size: 14px;'>
-    Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani · 
+    Built with ❤️ + 🐶 by <b>Prakhar Mathur</b> · BITS Pilani · 
     <br>📬 Email: <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
 </div>
 """, unsafe_allow_html=True)

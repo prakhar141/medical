@@ -10,7 +10,7 @@ import random
 
 # ================== CONFIG ==================
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY") or "YOUR_API_KEY"
-MODEL_NAME = os.getenv("MODEL_NAME") or "z-ai/glm-4.5-air:free"
+MODEL_NAME = os.getenv("MODEL_NAME") or "deepseek/deepseek-chat-v3.1:free"
 EMBED_MODEL = os.getenv("EMBED_MODEL") or "sentence-transformers/all-MiniLM-L6-v2"
 K_VAL = int(os.getenv("K_VAL") or 4)
 

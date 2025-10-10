@@ -283,12 +283,11 @@ def local_rag_answer(question: str) -> str:
     docs = retriever.get_relevant_documents(question)
     if not docs:
         return "I couldn't reach the external API and I found no relevant documents locally. Please try again later."
-    # Simple deterministic aggregation: list bullets of doc summaries (could be improved)
     snippets = [doc.page_content.strip() for doc in docs if doc.page_content.strip()]
     summary = "Local summary based on stored documents:\n\n"
     for i, s in enumerate(snippets[:K_VAL], 1):
-        # keep snippets short
-        summary += f"{i}. {s[:800].replace('\\n', ' ')}\n\n"
+        snippet_clean = s[:800].replace("\n", " ")
+        summary += f"{i}. {snippet_clean}\n\n"
     summary += "⚠️ Note: This is a local fallback response because the external API was unavailable."
     return summary
 

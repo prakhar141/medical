@@ -219,4 +219,160 @@ def call_openrouter_with_retries(
                     logger.error(last_error + f" raw: {resp.text}")
                     # treat as transient and retry
             else:
-                # Handle common problematic
+                # Handle common problematic codes
+                if resp.status_code in (409, 429):
+                    # Respect Retry-After if present
+                    retry_after = parse_retry_after(resp) or exponential_backoff_with_jitter(attempt)
+                    msg = f"Received {resp.status_code} from OpenRouter. Waiting {retry_after:.1f}s before retry."
+                    logger.warning(msg)
+                    circuit.record_failure()
+                    time.sleep(retry_after)
+                    continue
+                elif 500 <= resp.status_code < 600:
+                    # server error
+                    wait = exponential_backoff_with_jitter(attempt)
+                    logger.warning(f"Server error {resp.status_code}. Waiting {wait:.2f}s and retrying.")
+                    circuit.record_failure()
+                    time.sleep(wait)
+                    continue
+                else:
+                    # client error (400s other than 409/429) treat as terminal
+                    last_error = f"OpenRouter returned {resp.status_code}: {resp.text}"
+                    logger.error(last_error)
+                    # Do not retry on 400-level errors other than 409/429
+                    circuit.record_failure()
+                    return False, last_error
+
+        except requests.exceptions.RequestException as e:
+            last_error = f"Network error: {e}"
+            logger.exception(last_error)
+            circuit.record_failure()
+            wait = exponential_backoff_with_jitter(attempt)
+            time.sleep(wait)
+            continue
+
+    # Exhausted attempts -> open circuit and return failure
+    circuit.record_failure()
+    circuit.opened_at = datetime.utcnow()  # ensure circuit opens when exhausted
+    logger.error(f"OpenRouter calls exhausted after {attempt} attempts. Last error: {last_error}")
+    return False, f"OpenRouter unavailable after retries: {last_error or 'unknown error'}"
+
+# ------------------ RAG + LOCAL FALLBACK ------------------
+SYSTEM_PROMPT = (
+    "You are Derma Consult. Summarize advanced dermatology concepts like "
+    "inflammatory skin diseases, nail and hair disorders, dermatopathology, "
+    "and dermatologic therapeutics in micro-learning chunks.\n\n"
+    "Act as a gamified quizmaster, offering adaptive problem-solving levels, "
+    "leaderboard challenges, and badges for clinical learning streaks.\n\n"
+    "Suggest 'clinic hacks' or exam shortcuts based on common mistakes and "
+    "best practices (ethically safe, medically accurate). "
+    "Sprinkle dog-inspired analogies where fun, but keep answers clinically accurate. "
+    "Answer in English and stick to dermatology topics only."
+)
+
+def build_prompt_with_context(question: str, context_docs: List[str]) -> List[Dict[str, str]]:
+    context_text = "\n\n".join(context_docs) if context_docs else "No relevant context found."
+    messages = [
+        {"role": "system", "content": SYSTEM_PROMPT},
+        {"role": "user", "content": f"Context:\n{context_text}\n\nQuestion: {question}"}
+    ]
+    return messages
+
+def local_rag_answer(question: str) -> str:
+    """A simple local fallback when API is down — returns a concise synthesis of retrieved docs."""
+    docs = retriever.get_relevant_documents(question)
+    if not docs:
+        return "I couldn't reach the external API and I found no relevant documents locally. Please try again later."
+    # Simple deterministic aggregation: list bullets of doc summaries (could be improved)
+    snippets = [doc.page_content.strip() for doc in docs if doc.page_content.strip()]
+    summary = "Local summary based on stored documents:\n\n"
+    for i, s in enumerate(snippets[:K_VAL], 1):
+        # keep snippets short
+        summary += f"{i}. {s[:800].replace('\\n', ' ')}\n\n"
+    summary += "⚠️ Note: This is a local fallback response because the external API was unavailable."
+    return summary
+
+# ------------------ UI: Chat behavior ------------------
+def type_like_chatgpt(text: str, speed: float = 0.004):
+    placeholder = st.empty()
+    animated = ""
+    for c in text:
+        animated += c
+        placeholder.markdown(animated + " |")
+        time.sleep(speed)
+    placeholder.markdown(animated + " 🐾")
+
+DOG_EMOJIS = ["🐶", "🐕", "🐩", "🐾", "🦴"]
+
+def doggy_reaction():
+    st.markdown(f"### {random.choice(DOG_EMOJIS)} Thanks for the question!")
+
+def show_dog_pic():
+    try:
+        img = requests.get("https://dog.ceo/api/breeds/image/random", timeout=8).json().get("message")
+        if img:
+            st.image(img, caption="Here’s a little 🐶 break!", use_container_width=True)
+    except Exception:
+        logger.debug("Dog pic failed to load")
+
+# ------------------ SESSION STATE ------------------
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
+if "last_answer_animated" not in st.session_state:
+    st.session_state.last_answer_animated = False
+
+# Show circuit state to user (helpful)
+if circuit.is_open():
+    cool_until = (circuit.opened_at + timedelta(seconds=circuit.cooldown_seconds)).isoformat() if circuit.opened_at else "soon"
+    st.warning(f"OpenRouter requests are temporarily paused due to repeated failures. We'll try again after cooldown (until ~{cool_until}). A local fallback will be used in the meantime.")
+
+# Chat input
+user_query = st.chat_input("Ask me about Dermatology 🐾")
+if user_query:
+    st.session_state.chat_history.append({"role": "user", "content": user_query})
+    # Build prompt with retrieved context
+    docs = retriever.get_relevant_documents(user_query)
+    context_docs = [d.page_content for d in docs] if docs else []
+    messages = build_prompt_with_context(user_query, context_docs)
+
+    # Call OpenRouter robust client
+    with st.spinner("Consulting OpenRouter (robust) ..."):
+        success, reply_or_error = call_openrouter_with_retries(MODEL_NAME, messages)
+
+    if success:
+        st.session_state.chat_history.append({"role": "assistant", "content": reply_or_error})
+    else:
+        # fallback: either local rag or an informative error
+        if "temporary" in reply_or_error.lower() or "unavailable" in reply_or_error.lower():
+            fallback = local_rag_answer(user_query)
+            st.session_state.chat_history.append({"role": "assistant", "content": fallback})
+        else:
+            # Generic informative message + local fallback
+            fallback = local_rag_answer(user_query)
+            combined = f"⚠️ External model unavailable: {reply_or_error}\n\nUsing local fallback:\n\n{fallback}"
+            st.session_state.chat_history.append({"role": "assistant", "content": combined})
+
+    st.session_state.last_answer_animated = True
+    st.rerun()
+
+# Render chat
+for i, chat in enumerate(st.session_state.chat_history):
+    role = "user" if chat["role"] == "user" else "assistant"
+    with st.chat_message(role):
+        if i == len(st.session_state.chat_history) - 1 and chat["role"] == "assistant" and st.session_state.last_answer_animated:
+            type_like_chatgpt(chat["content"])
+            doggy_reaction()
+            if random.random() < 0.20:
+                show_dog_pic()
+            st.session_state.last_answer_animated = False
+        else:
+            st.markdown(chat["content"])
+
+# ------------------ FOOTER ------------------
+st.markdown("""
+<hr style="margin-top: 40px;">
+<div style='text-align: center; color: #888; font-size: 14px;'>
+    Built with ❤️ + 🐶 by <b>Prakhar Mathur</b> · BITS Pilani · 
+    <br>📬 Email: <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
+</div>
+""", unsafe_allow_html=True)

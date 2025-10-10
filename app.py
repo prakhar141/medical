@@ -335,7 +335,7 @@ if user_query:
     messages = build_prompt_with_context(user_query, context_docs)
 
     # Call OpenRouter robust client
-    with st.spinner("Consulting OpenRouter (robust) ..."):
+    with st.spinner("Thinking ..."):
         success, reply_or_error = call_openrouter_with_retries(MODEL_NAME, messages)
 
     if success:

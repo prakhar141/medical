@@ -94,7 +94,7 @@ hr {
 """, unsafe_allow_html=True)
 
 st.title("💎 Derma Consult")
-st.markdown("#### AI-assisted dermatological reasoning and education — clear, precise, and reliable.")
+st.markdown("#### AI-assisted dermatological reasoning— clear, precise, and reliable.")
 
 # =====================================================
 # 🔧 UTILITIES
@@ -259,7 +259,7 @@ for i, msg in enumerate(st.session_state.chat_history):
 st.markdown("""
 <hr>
 <div style='text-align:center; color:#666; font-size:13px;'>
-    Built with love ❤️ by <b>Prakhar Mathur</b> · BITS Pilani <br>
-    📬 <a href="mailto:prakhar.mathur2020@gmail.com">prakhar.mathur2020@gmail.com</a>
+    Built with ❤️ by <b>Prakhar Mathur</b> · BITS Pilani <br>
+    📬 <a href="mailto:prakhar.mathur2020@gmail.com">Contact me</a>
 </div>
 """, unsafe_allow_html=True)

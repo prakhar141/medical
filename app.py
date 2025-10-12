@@ -5,6 +5,7 @@ import json
 import hashlib
 import logging
 from typing import List, Dict
+import re
 
 import requests
 import streamlit as st
@@ -17,7 +18,7 @@ from langchain_community.embeddings import HuggingFaceEmbeddings
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_API_KEY")
 MODEL_MAIN = "deepseek/deepseek-r1:free"
 MODEL_FALLBACKS = [
-    "mistralai/mistral-7b-instruct:free",
+    "openai/gpt-oss-20b:free",
     "google/gemma-2-9b-it:free",
     "tiiuae/falcon-180b-chat:free"
 ]
@@ -156,8 +157,6 @@ def call_with_fallbacks(messages: List[Dict[str, str]]) -> str:
 # =====================================================
 # FOLLOW-UP DETECTION
 # =====================================================
-import re
-
 FOLLOW_UP_KEYWORDS = [
     "explain", "why", "more", "details", "elaborate", "clarify", "expand", "further", "deeper",
     "reason", "rationale", "how come", "please explain", "give example", "examples", "can you detail",
@@ -174,54 +173,51 @@ FOLLOW_UP_KEYWORDS = [
     "expand insight", "give reasoning", "more reasoning", "please expand", "please provide details"
 ]
 
-# Precompile regex patterns for speed and accuracy
 FOLLOW_UP_PATTERNS = [
     re.compile(r'\b' + re.escape(keyword) + r'\b', re.IGNORECASE)
-    for keyword in sorted(FOLLOW_UP_KEYWORDS, key=lambda x: -len(x))  # longer phrases first
+    for keyword in sorted(FOLLOW_UP_KEYWORDS, key=lambda x: -len(x))
 ]
 
 def is_follow_up(query: str) -> bool:
-    """
-    Detects if a user query is a follow-up question.
-    Uses word-boundary regex to avoid false positives and matches multi-word phrases first.
-    """
-    query_clean = re.sub(r'[^\w\s]', '', query.lower())  # remove punctuation
-    for pattern in FOLLOW_UP_PATTERNS:
-        if pattern.search(query_clean):
-            return True
-    return False
+    query_clean = re.sub(r'[^\w\s]', '', query.lower())
+    return any(pattern.search(query_clean) for pattern in FOLLOW_UP_PATTERNS)
 
 # =====================================================
 # RAG PIPELINE WITH CONDITIONAL CONTEXT
 # =====================================================
-SYSTEM_PROMPT = (
+SYSTEM_PROMPT_NORMAL = (
     "You are Derma Consult, a board-certified dermatologist and medical educator. "
     "Provide precise, evidence-based explanations and diagnostic reasoning. "
-    "Be structured, concise, and clinically sound — give short, one-line answers."
+    "Be structured,Give detailed yet concise answers in one line or two."
+)
+
+SYSTEM_PROMPT_FOLLOWUP = (
+    "You are Derma Consult, a board-certified dermatologist and medical educator. "
+    "The user is asking a follow-up question. Provide precise, evidence-based explanations "
+    "and reasoning based on the previous answer. Be structured, concise, and clinically sound. "
+    "Give thinking insights at each step of answer"
 )
 
 def rag_answer_conditional(chat_history: List[Dict[str, str]]) -> str:
-    # Last user question
     last_user_query = chat_history[-1]["content"]
-    
-    # Retrieve FAISS documents
     docs = retriever.get_relevant_documents(last_user_query)
-    context = "\n".join([d.page_content for d in docs]) if docs else "No relevant context found."
-    
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
-    
-    # Add previous turn only if follow-up
-    if len(chat_history) > 1 and is_follow_up(last_user_query):
+    context = "\n".join([d.page_content for d in docs]) if docs else ""
+
+    follow_up = len(chat_history) > 1 and is_follow_up(last_user_query)
+    system_prompt = SYSTEM_PROMPT_FOLLOWUP if follow_up else SYSTEM_PROMPT_NORMAL
+    messages = [{"role": "system", "content": system_prompt}]
+
+    if follow_up:
         prev = chat_history[-2]
-        if prev["role"] == "assistant":
+        if prev["role"] == "assistant" and prev["content"].strip():
             messages.append({"role": "assistant", "content": prev["content"]})
-        messages.append({"role": "user", "content": last_user_query})
+        messages.append({"role": "user", "content": f"Follow-up question: {last_user_query}"})
     else:
         messages.append({"role": "user", "content": last_user_query})
-    
-    # Add retrieved context at the last user turn
-    messages.append({"role": "user", "content": f"Context:\n{context}"})
-    
+
+    if context:
+        messages.append({"role": "user", "content": f"Context:\n{context}"})
+
     return call_with_fallbacks(messages)
 
 # =====================================================
@@ -250,7 +246,6 @@ if user_query:
     st.session_state.chat_history.append({"role": "assistant", "content": answer})
     st.session_state.animate_last = True
 
-# Render chat messages
 for i, msg in enumerate(st.session_state.chat_history):
     with st.chat_message("user" if msg["role"] == "user" else "assistant"):
         if i == len(st.session_state.chat_history) - 1 and msg["role"] == "assistant" and st.session_state.animate_last:

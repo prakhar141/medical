@@ -1,11 +1,10 @@
-# app_clean.py
+# app_conditional_context.py
 import os
 import time
 import json
 import hashlib
 import logging
 from typing import List, Dict
-from datetime import datetime
 
 import requests
 import streamlit as st
@@ -110,9 +109,6 @@ def cache_set(key, value):
 # =====================================================
 # OPENROUTER CALLER
 # =====================================================
-def exponential_backoff(attempt):
-    return min(MAX_BACKOFF, BASE_BACKOFF * (2 ** attempt))
-
 def call_openrouter(model: str, messages: List[Dict[str, str]]) -> str:
     key = hash_prompt(model, messages)
     cached = cache_get(key)
@@ -158,23 +154,74 @@ def call_with_fallbacks(messages: List[Dict[str, str]]) -> str:
     return "⚠️ All models temporarily unavailable. Please retry later."
 
 # =====================================================
-# RAG PIPELINE
+# FOLLOW-UP DETECTION
+# =====================================================
+import re
+
+FOLLOW_UP_KEYWORDS = [
+    "explain", "why", "more", "details", "elaborate", "clarify", "expand", "further", "deeper",
+    "reason", "rationale", "how come", "please explain", "give example", "examples", "can you detail",
+    "step by step", "break down", "insight", "insights", "expand on", "expand further", "expand more",
+    "go deeper", "go further", "justify", "explanation", "context", "elaboration", "tell me more",
+    "help me understand", "more info", "additional info", "additional information", "further details",
+    "more details", "what else", "continue", "keep going", "clarification", "please clarify",
+    "illuminate", "shed light", "reasoning", "background", "expand reasoning", "deeper reasoning",
+    "amplify", "add context", "give context", "exemplify", "examples please", "break it down",
+    "what do you mean", "more explanation", "more clarity", "please elaborate", "expand explanation",
+    "justify reasoning", "stepwise explanation", "stepwise reasoning", "further explanation",
+    "dig deeper", "enlighten", "explain further", "more info please", "details please",
+    "expand thoughts", "clarify further", "go into details", "additional clarification", "more insight",
+    "expand insight", "give reasoning", "more reasoning", "please expand", "please provide details"
+]
+
+# Precompile regex patterns for speed and accuracy
+FOLLOW_UP_PATTERNS = [
+    re.compile(r'\b' + re.escape(keyword) + r'\b', re.IGNORECASE)
+    for keyword in sorted(FOLLOW_UP_KEYWORDS, key=lambda x: -len(x))  # longer phrases first
+]
+
+def is_follow_up(query: str) -> bool:
+    """
+    Detects if a user query is a follow-up question.
+    Uses word-boundary regex to avoid false positives and matches multi-word phrases first.
+    """
+    query_clean = re.sub(r'[^\w\s]', '', query.lower())  # remove punctuation
+    for pattern in FOLLOW_UP_PATTERNS:
+        if pattern.search(query_clean):
+            return True
+    return False
+
+# =====================================================
+# RAG PIPELINE WITH CONDITIONAL CONTEXT
 # =====================================================
 SYSTEM_PROMPT = (
     "You are Derma Consult, a board-certified dermatologist and medical educator. "
     "Provide precise, evidence-based explanations and diagnostic reasoning. "
-    "Be structured, concise, and clinically sound — as if medical doctor.give very short answers in one line only"
+    "Be structured, concise, and clinically sound — give short, one-line answers."
 )
 
-def rag_answer(question: str) -> str:
-    docs = retriever.get_relevant_documents(question)
+def rag_answer_conditional(chat_history: List[Dict[str, str]]) -> str:
+    # Last user question
+    last_user_query = chat_history[-1]["content"]
+    
+    # Retrieve FAISS documents
+    docs = retriever.get_relevant_documents(last_user_query)
     context = "\n".join([d.page_content for d in docs]) if docs else "No relevant context found."
-    deep_mode = len(question.split()) > 25
-    system_prompt = SYSTEM_PROMPT + (" Use deeper reasoning for multifactorial dermatologic conditions." if deep_mode else "")
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": f"Context:\n{context}\n\nQuestion: {question}"}
-    ]
+    
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    
+    # Add previous turn only if follow-up
+    if len(chat_history) > 1 and is_follow_up(last_user_query):
+        prev = chat_history[-2]
+        if prev["role"] == "assistant":
+            messages.append({"role": "assistant", "content": prev["content"]})
+        messages.append({"role": "user", "content": last_user_query})
+    else:
+        messages.append({"role": "user", "content": last_user_query})
+    
+    # Add retrieved context at the last user turn
+    messages.append({"role": "user", "content": f"Context:\n{context}"})
+    
     return call_with_fallbacks(messages)
 
 # =====================================================
@@ -199,7 +246,7 @@ user_query = st.chat_input("Ask a dermatology-related question...")
 if user_query:
     st.session_state.chat_history.append({"role": "user", "content": user_query})
     with st.spinner("Consulting dermatologic literature..."):
-        answer = rag_answer(user_query)
+        answer = rag_answer_conditional(st.session_state.chat_history)
     st.session_state.chat_history.append({"role": "assistant", "content": answer})
     st.session_state.animate_last = True
 

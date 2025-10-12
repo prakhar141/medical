@@ -19,7 +19,7 @@ OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "YOUR_API_KEY")
 MODEL_MAIN = "deepseek/deepseek-r1:free"
 MODEL_FALLBACKS = [
     "openai/gpt-oss-20b:free",
-    "google/gemma-2-9b-it:free",
+    "mistralai/mistral-small-3.2-24b-instruct:free",
     "tiiuae/falcon-180b-chat:free"
 ]
 EMBED_MODEL = os.getenv("EMBED_MODEL", "sentence-transformers/all-MiniLM-L6-v2")

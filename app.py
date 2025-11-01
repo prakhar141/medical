@@ -200,7 +200,7 @@ SYSTEM_PROMPT_FOLLOWUP = (
 
 def rag_answer_conditional(chat_history: List[Dict[str, str]]) -> str:
     last_user_query = chat_history[-1]["content"]
-    docs = retriever.get_relevant_documents(last_user_query)
+    docs = retriever.invoke(last_user_query)
     context = "\n".join([d.page_content for d in docs]) if docs else ""
 
     follow_up = len(chat_history) > 1 and is_follow_up(last_user_query)
